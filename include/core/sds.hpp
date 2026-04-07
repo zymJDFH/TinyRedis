@@ -6,7 +6,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string_view>
-
+//字节对齐
 #pragma pack(push,1)
 
 struct SdsHdr8 {
