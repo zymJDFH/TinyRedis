@@ -41,3 +41,12 @@ Redis 命令请求通常是“由 Bulk String 组成的 RESP Array”。
 - 协议解析错误 -> `-ERR Protocol error\r\n`
 - 未知命令 -> `-ERR unknown command '<cmd>'\r\n`
 - 参数个数错误 -> `-ERR wrong number of arguments for '<cmd>'\r\n`
+
+## 当前已实现命令
+
+- `PING`
+- `SET key value`
+- `GET key`
+- `DEL key [key ...]`
+- `EXISTS key`
+- `INCR key`
