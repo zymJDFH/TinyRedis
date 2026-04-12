@@ -1,5 +1,4 @@
-#ifndef DICT_HPP
-#define DICT_HPP
+#pragma once
 #include "sds.hpp"
 
 struct dictEntry{
@@ -38,4 +37,3 @@ private:
     void clear();
 };
 
-#endif

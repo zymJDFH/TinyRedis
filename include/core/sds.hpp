@@ -1,5 +1,4 @@
-#ifndef SDS_HPP
-#define SDS_HPP
+#pragma once
 
 #include <cstdint>
 #include <cstdlib>
@@ -95,5 +94,3 @@ private:
     void setLen(size_t len);
 
 };
-
-#endif

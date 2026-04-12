@@ -12,6 +12,8 @@ add_executable(tinyredis
     main.cpp
     src/core/sds.cpp
     src/core/dict.cpp
+    src/protocol/respParser.cpp
+    src/protocol/respEncoder.cpp
 )
 
 # 包含头文件目录
@@ -48,3 +50,19 @@ target_include_directories(test_dict PRIVATE ${CMAKE_SOURCE_DIR}/include)
 enable_testing()
 add_test(NAME SDSTests COMMAND test_sds)
 add_test(NAME DictTests COMMAND test_dict)
+
+# RESP 测试
+add_executable(test_resp
+    test/test_resp.cpp
+    src/protocol/respParser.cpp
+    src/protocol/respEncoder.cpp
+)
+
+target_link_libraries(test_resp
+    GTest::gtest
+    GTest::gtest_main
+)
+
+target_include_directories(test_resp PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_test(NAME RespTests COMMAND test_resp)
