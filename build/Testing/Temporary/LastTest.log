@@ -1,0 +1,176 @@
+Start testing: Apr 13 10:53 CST
+----------------------------------------------------------
+1/4 Testing: SDSTests
+1/4 Test: SDSTests
+Command: "/home/zym/Share/TinyRedis/build/test_sds"
+Directory: /home/zym/Share/TinyRedis/build
+"SDSTests" start time: Apr 13 10:53 CST
+Output:
+----------------------------------------------------------
+Running main() from ./googletest/src/gtest_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from SDSTest
+[ RUN      ] SDSTest.DefaultConstructor
+[       OK ] SDSTest.DefaultConstructor (0 ms)
+[ RUN      ] SDSTest.CStringConstructor
+[       OK ] SDSTest.CStringConstructor (0 ms)
+[ RUN      ] SDSTest.StringViewConstructor
+[       OK ] SDSTest.StringViewConstructor (0 ms)
+[ RUN      ] SDSTest.Append
+[       OK ] SDSTest.Append (0 ms)
+[ RUN      ] SDSTest.MultipleAppends
+[       OK ] SDSTest.MultipleAppends (0 ms)
+[ RUN      ] SDSTest.Capacity
+[       OK ] SDSTest.Capacity (0 ms)
+[ RUN      ] SDSTest.Available
+[       OK ] SDSTest.Available (0 ms)
+[ RUN      ] SDSTest.Clear
+[       OK ] SDSTest.Clear (0 ms)
+[ RUN      ] SDSTest.MoveConstructor
+[       OK ] SDSTest.MoveConstructor (0 ms)
+[ RUN      ] SDSTest.MoveAssignment
+[       OK ] SDSTest.MoveAssignment (0 ms)
+[ RUN      ] SDSTest.AppendStringView
+[       OK ] SDSTest.AppendStringView (0 ms)
+[----------] 11 tests from SDSTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 11 tests.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"SDSTests" end time: Apr 13 10:53 CST
+"SDSTests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/4 Testing: DictTests
+2/4 Test: DictTests
+Command: "/home/zym/Share/TinyRedis/build/test_dict"
+Directory: /home/zym/Share/TinyRedis/build
+"DictTests" start time: Apr 13 10:53 CST
+Output:
+----------------------------------------------------------
+Running main() from ./googletest/src/gtest_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from DictTest
+[ RUN      ] DictTest.BasicSetAndGet
+[       OK ] DictTest.BasicSetAndGet (0 ms)
+[ RUN      ] DictTest.GetNonExistent
+[       OK ] DictTest.GetNonExistent (0 ms)
+[ RUN      ] DictTest.UpdateExistingKey
+[       OK ] DictTest.UpdateExistingKey (0 ms)
+[ RUN      ] DictTest.Erase
+[       OK ] DictTest.Erase (0 ms)
+[ RUN      ] DictTest.EraseNonExistent
+[       OK ] DictTest.EraseNonExistent (0 ms)
+[ RUN      ] DictTest.MultipleKeys
+[       OK ] DictTest.MultipleKeys (0 ms)
+[ RUN      ] DictTest.Rehash
+[       OK ] DictTest.Rehash (0 ms)
+[ RUN      ] DictTest.MoveConstructor
+[       OK ] DictTest.MoveConstructor (0 ms)
+[ RUN      ] DictTest.MoveAssignment
+[       OK ] DictTest.MoveAssignment (0 ms)
+[ RUN      ] DictTest.DifferentValueTypes
+[       OK ] DictTest.DifferentValueTypes (0 ms)
+[ RUN      ] DictTest.EraseAndReAdd
+[       OK ] DictTest.EraseAndReAdd (0 ms)
+[----------] 11 tests from DictTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 11 tests.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"DictTests" end time: Apr 13 10:53 CST
+"DictTests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/4 Testing: RespTests
+3/4 Test: RespTests
+Command: "/home/zym/Share/TinyRedis/build/test_resp"
+Directory: /home/zym/Share/TinyRedis/build
+"RespTests" start time: Apr 13 10:53 CST
+Output:
+----------------------------------------------------------
+Running main() from ./googletest/src/gtest_main.cc
+[==========] Running 6 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from RESPEncoderTest
+[ RUN      ] RESPEncoderTest.SimpleValues
+[       OK ] RESPEncoderTest.SimpleValues (0 ms)
+[ RUN      ] RESPEncoderTest.ArrayAsBulkStrings
+[       OK ] RESPEncoderTest.ArrayAsBulkStrings (0 ms)
+[----------] 2 tests from RESPEncoderTest (0 ms total)
+
+[----------] 4 tests from RESPParserTest
+[ RUN      ] RESPParserTest.ParseSimpleString
+[       OK ] RESPParserTest.ParseSimpleString (0 ms)
+[ RUN      ] RESPParserTest.ParseBulkStringWithPartialFeed
+[       OK ] RESPParserTest.ParseBulkStringWithPartialFeed (0 ms)
+[ RUN      ] RESPParserTest.ParseArray
+[       OK ] RESPParserTest.ParseArray (0 ms)
+[ RUN      ] RESPParserTest.ParseTwoMessagesInSequence
+[       OK ] RESPParserTest.ParseTwoMessagesInSequence (0 ms)
+[----------] 4 tests from RESPParserTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 6 tests from 2 test suites ran. (0 ms total)
+[  PASSED  ] 6 tests.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"RespTests" end time: Apr 13 10:53 CST
+"RespTests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/4 Testing: CommandTests
+4/4 Test: CommandTests
+Command: "/home/zym/Share/TinyRedis/build/test_command"
+Directory: /home/zym/Share/TinyRedis/build
+"CommandTests" start time: Apr 13 10:53 CST
+Output:
+----------------------------------------------------------
+Running main() from ./googletest/src/gtest_main.cc
+[==========] Running 6 tests from 3 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from CommandParserTest
+[ RUN      ] CommandParserTest.ParseArrayCommand
+[       OK ] CommandParserTest.ParseArrayCommand (0 ms)
+[ RUN      ] CommandParserTest.RejectNonArray
+[       OK ] CommandParserTest.RejectNonArray (0 ms)
+[----------] 2 tests from CommandParserTest (0 ms total)
+
+[----------] 3 tests from CommandDispatcherTest
+[ RUN      ] CommandDispatcherTest.PingSetGetDelFlow
+[       OK ] CommandDispatcherTest.PingSetGetDelFlow (0 ms)
+[ RUN      ] CommandDispatcherTest.ExistsAndIncrFlow
+[       OK ] CommandDispatcherTest.ExistsAndIncrFlow (0 ms)
+[ RUN      ] CommandDispatcherTest.ErrorPaths
+[       OK ] CommandDispatcherTest.ErrorPaths (0 ms)
+[----------] 3 tests from CommandDispatcherTest (0 ms total)
+
+[----------] 1 test from CommandIntegrationTest
+[ RUN      ] CommandIntegrationTest.RespToCommandExecution
+[       OK ] CommandIntegrationTest.RespToCommandExecution (0 ms)
+[----------] 1 test from CommandIntegrationTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 6 tests from 3 test suites ran. (0 ms total)
+[  PASSED  ] 6 tests.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"CommandTests" end time: Apr 13 10:53 CST
+"CommandTests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Apr 13 10:53 CST

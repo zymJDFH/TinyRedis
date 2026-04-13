@@ -1,0 +1,8 @@
+/home/zym/Share/TinyRedis/build/CMakeFiles/tinyredis.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/test_sds.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/test_dict.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/test_resp.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/test_command.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/test.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/edit_cache.dir
+/home/zym/Share/TinyRedis/build/CMakeFiles/rebuild_cache.dir

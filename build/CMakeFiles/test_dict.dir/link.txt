@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/test_dict.dir/test/test_dict.cpp.o CMakeFiles/test_dict.dir/src/core/sds.cpp.o CMakeFiles/test_dict.dir/src/core/dict.cpp.o -o test_dict  /usr/lib/x86_64-linux-gnu/libgtest.a /usr/lib/x86_64-linux-gnu/libgtest_main.a /usr/lib/x86_64-linux-gnu/libgtest.a 

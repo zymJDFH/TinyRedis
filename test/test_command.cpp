@@ -51,11 +51,27 @@ TEST(CommandDispatcherTest, PingSetGetDelFlow) {
     EXPECT_EQ(dispatcher.dispatch({"GET", "name"}), "$-1\r\n");
 }
 
+TEST(CommandDispatcherTest, ExistsAndIncrFlow) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"EXISTS", "counter"}), ":0\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCR", "counter"}), ":1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCR", "counter"}), ":2\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"GET", "counter"}), "$1\r\n2\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXISTS", "counter"}), ":1\r\n");
+}
+
 TEST(CommandDispatcherTest, ErrorPaths) {
     CommandDispatcher dispatcher;
 
     EXPECT_EQ(dispatcher.dispatch({"SET", "k"}), "-ERR wrong number of arguments for 'set' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"GET"}), "-ERR wrong number of arguments for 'get' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXISTS"}), "-ERR wrong number of arguments for 'exists' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCR"}), "-ERR wrong number of arguments for 'incr' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"SET", "n", "abc"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCR", "n"}), "-ERR value is not an integer or out of range\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"SET", "mx", "9223372036854775807"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCR", "mx"}), "-ERR increment or decrement would overflow\r\n");
     EXPECT_EQ(dispatcher.dispatch({"UNKNOWN"}), "-ERR unknown command 'UNKNOWN'\r\n");
 }
 
