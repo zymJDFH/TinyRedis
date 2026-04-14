@@ -12,6 +12,7 @@ add_executable(tinyredis
     main.cpp
     src/core/sds.cpp
     src/core/dict.cpp
+    src/object/redisObject.cpp
     src/protocol/respParser.cpp
     src/protocol/respEncoder.cpp
     src/command/inMemoryDB.cpp
@@ -74,6 +75,9 @@ add_test(NAME RespTests COMMAND test_resp)
 # Command 测试
 add_executable(test_command
     test/test_command.cpp
+    src/core/sds.cpp
+    src/core/dict.cpp
+    src/object/redisObject.cpp
     src/protocol/respParser.cpp
     src/protocol/respEncoder.cpp
     src/command/inMemoryDB.cpp

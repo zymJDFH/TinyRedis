@@ -5,6 +5,9 @@
 ## 文档
 
 - [开发路线图](docs/roadmap.md)
+- [工业化实现方案](docs/industrial-plan.md)
+- [P0-P1 执行拆解](docs/p0-p1-execution-plan.md)
+- [里程碑看板模板](docs/milestones.md)
 - [设计说明](docs/design.md)
 - [架构决策记录](docs/decisions.md)
 - [RESP 协议笔记](docs/protocol-notes.md)

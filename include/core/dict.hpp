@@ -1,6 +1,7 @@
 #pragma once
 #include "sds.hpp"
 #include <cstddef>
+#include <functional>
 
 struct dictEntry{
     SDS key;
@@ -29,6 +30,7 @@ public:
     void* get(const SDS&key);
     bool erase(const SDS&key);
     size_t size();
+    void forEach(const std::function<void(const SDS&, void*)>& fn) const;
 
 private:
     dict dict_;

@@ -239,6 +239,26 @@ size_t DICT::size() {
     return dict_.ht[0].used + dict_.ht[1].used;
 }
 
+void DICT::forEach(const std::function<void(const SDS&, void*)>& fn) const {
+    if (!fn) {
+        return;
+    }
+
+    for (int t = 0; t < 2; ++t) {
+        const dictht& ht = dict_.ht[t];
+        if (ht.table == nullptr) {
+            continue;
+        }
+        for (size_t i = 0; i < ht.size; ++i) {
+            dictEntry* entry = ht.table[i];
+            while (entry != nullptr) {
+                fn(entry->key, entry->value);
+                entry = entry->next;
+            }
+        }
+    }
+}
+
 void DICT::rehashStep() {
     if (!isRehashing()) {
         return;
