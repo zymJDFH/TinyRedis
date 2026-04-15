@@ -1,8 +1,20 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+#include "command/inMemoryDB.hpp"
 #include "command/commandDispatcher.hpp"
 #include "command/commandParser.hpp"
 #include "protocol/respParser.hpp"
+
+namespace {
+long long parseIntegerReply(const std::string& resp) {
+    if (resp.size() < 4 || resp.front() != ':' || resp.back() != '\n') {
+        return 0;
+    }
+    return std::stoll(resp.substr(1, resp.size() - 3));
+}
+} // namespace
 
 TEST(CommandParserTest, ParseArrayCommand) {
     RESPObject cmd;
@@ -68,11 +80,64 @@ TEST(CommandDispatcherTest, ErrorPaths) {
     EXPECT_EQ(dispatcher.dispatch({"GET"}), "-ERR wrong number of arguments for 'get' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXISTS"}), "-ERR wrong number of arguments for 'exists' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR"}), "-ERR wrong number of arguments for 'incr' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k"}), "-ERR wrong number of arguments for 'expire' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"TTL"}), "-ERR wrong number of arguments for 'ttl' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"PTTL"}), "-ERR wrong number of arguments for 'pttl' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"PERSIST"}), "-ERR wrong number of arguments for 'persist' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k", "abc"}), "-ERR value is not an integer or out of range\r\n");
     EXPECT_EQ(dispatcher.dispatch({"SET", "n", "abc"}), "+OK\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR", "n"}), "-ERR value is not an integer or out of range\r\n");
     EXPECT_EQ(dispatcher.dispatch({"SET", "mx", "9223372036854775807"}), "+OK\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR", "mx"}), "-ERR increment or decrement would overflow\r\n");
     EXPECT_EQ(dispatcher.dispatch({"UNKNOWN"}), "-ERR unknown command 'UNKNOWN'\r\n");
+}
+
+TEST(CommandDispatcherTest, TtlAndPersistFlow) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"TTL", "k"}), ":-2\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"PTTL", "k"}), ":-2\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"PERSIST", "k"}), ":0\r\n");
+
+    EXPECT_EQ(dispatcher.dispatch({"SET", "k", "v"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"TTL", "k"}), ":-1\r\n");
+
+    EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k", "10"}), ":1\r\n");
+    const long long ttlAfterExpire = parseIntegerReply(dispatcher.dispatch({"TTL", "k"}));
+    EXPECT_GE(ttlAfterExpire, 0);
+    EXPECT_LE(ttlAfterExpire, 10);
+
+    const long long pttlAfterExpire = parseIntegerReply(dispatcher.dispatch({"PTTL", "k"}));
+    EXPECT_GT(pttlAfterExpire, 0);
+    EXPECT_LE(pttlAfterExpire, 10000);
+
+    EXPECT_EQ(dispatcher.dispatch({"PERSIST", "k"}), ":1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"TTL", "k"}), ":-1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"PERSIST", "k"}), ":0\r\n");
+}
+
+TEST(CommandDispatcherTest, ExpireImmediatelyDeletesKey) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"SET", "temp", "1"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "temp", "0"}), ":1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"GET", "temp"}), "$-1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"TTL", "temp"}), ":-2\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"PTTL", "temp"}), ":-2\r\n");
+}
+
+TEST(InMemoryDBTTLTest, ActiveExpireCycleRemovesExpiredKeys) {
+    InMemoryDB db;
+    std::string value;
+
+    db.set("active_k", "v");
+    EXPECT_EQ(db.expire("active_k", 1), 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    EXPECT_EQ(db.activeExpireCycle(64), 1u);
+    EXPECT_FALSE(db.get("active_k", value));
+    EXPECT_EQ(db.ttl("active_k"), -2);
 }
 
 TEST(CommandIntegrationTest, RespToCommandExecution) {

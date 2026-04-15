@@ -4,6 +4,7 @@
 #include "../../include/protocol/respEncoder.hpp"
 
 #include <arpa/inet.h>
+#include <chrono>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -16,6 +17,8 @@
 namespace {
 constexpr int kBacklog = 128;
 constexpr int kMaxEvents = 128;
+constexpr int kEpollWaitTimeoutMs = 100;
+constexpr int kCronIntervalMs = 100;
 constexpr size_t kReadBufSize = 4096;
 } // namespace
 
@@ -259,10 +262,13 @@ void EpollServer::handleClientWrite(int fd) {
 }
 
 void EpollServer::run() {
+    using Clock = std::chrono::steady_clock;
+
     epoll_event events[kMaxEvents];
+    auto lastCron = Clock::now();
 
     for (;;) {
-        const int n = ::epoll_wait(epollFd_, events, kMaxEvents, -1);
+        const int n = ::epoll_wait(epollFd_, events, kMaxEvents, kEpollWaitTimeoutMs);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
@@ -292,6 +298,14 @@ void EpollServer::run() {
             if (clients_.find(fd) != clients_.end() && (ev & EPOLLOUT) != 0) {
                 handleClientWrite(fd);
             }
+        }
+
+        const auto now = Clock::now();
+        const auto elapsedMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCron).count();
+        if (elapsedMs >= kCronIntervalMs) {
+            dispatcher_.cron();
+            lastCron = now;
         }
     }
 }
