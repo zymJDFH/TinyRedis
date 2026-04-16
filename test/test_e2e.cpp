@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <arpa/inet.h>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -230,16 +231,44 @@ private:
 class TinyRedisE2ETest : public ::testing::Test {
 protected:
     static void SetUpTestSuite() {
+        tcpAllowed_ = canUseTcpSocket();
+        if (!tcpAllowed_) {
+            return;
+        }
+
         const std::string serverBinary = getExecutableDir() + "/tinyredis";
-        ASSERT_TRUE(server_.start(serverBinary, kPort));
+        serverStarted_ = server_.start(serverBinary, kPort);
     }
 
     static void TearDownTestSuite() {
-        server_.stop();
+        if (serverStarted_) {
+            server_.stop();
+            serverStarted_ = false;
+        }
+    }
+
+    void SetUp() override {
+        if (!tcpAllowed_) {
+            GTEST_SKIP() << "TCP socket is not allowed in current environment";
+        }
+        ASSERT_TRUE(serverStarted_) << "failed to start tinyredis server process";
+    }
+
+    static constexpr int kPort = 6391;
+
+private:
+    static bool canUseTcpSocket() {
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            return false;
+        }
+        ::close(fd);
+        return true;
     }
 
     static inline ServerProcess server_;
-    static constexpr int kPort = 6391;
+    static inline bool tcpAllowed_ = false;
+    static inline bool serverStarted_ = false;
 };
 
 TEST_F(TinyRedisE2ETest, BasicCommandFlow) {
@@ -335,6 +364,28 @@ TEST_F(TinyRedisE2ETest, PipelineTwoCommandsInOneWrite) {
     ASSERT_TRUE(client.readReply(out2));
     ASSERT_EQ(out2.type, RESPType::INTEGER);
     EXPECT_GE(out2.integer, 1);
+}
+
+TEST_F(TinyRedisE2ETest, SplitSingleCommandAcrossTwoWrites) {
+    RespClient client;
+    ASSERT_TRUE(client.connectTo(kPort));
+
+    // 将一个完整 SET 命令拆成两段发送，模拟半包场景。
+    const std::string part1 = "*3\r\n$3\r\nSET\r\n$6\r\nhalf_k\r\n$1\r\n";
+    const std::string part2 = "v\r\n";
+    ASSERT_TRUE(client.sendAll(part1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(client.sendAll(part2));
+
+    RESPObject out;
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::SIMPLE_STRING);
+    EXPECT_EQ(out.str, "OK");
+
+    ASSERT_TRUE(client.sendAll(buildRequest({"GET", "half_k"})));
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::BULK_STRING);
+    EXPECT_EQ(out.str, "v");
 }
 
 TEST_F(TinyRedisE2ETest, ProtocolErrorThenConnectionClosed) {
