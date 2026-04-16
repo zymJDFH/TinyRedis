@@ -15,23 +15,24 @@
 
 - 网络层：单线程 `epoll`（LT）事件循环可用。
 - 协议层：RESP2 基础解析与编码可用。
-- 命令链路：`PING/SET/GET/DEL/EXISTS/INCR` 已打通。
+- 命令链路：`PING/SET/GET/DEL/EXISTS/INCR/EXPIRE/TTL/PTTL/PERSIST` 已打通。
+- 过期机制：惰性过期 + 主动过期扫描（cron 抽样）可用。
 - 存储层：`InMemoryDB + DICT + SDS + RedisObject` 基础能力可用。
 - 测试：`test_sds`、`test_dict`、`test_resp`、`test_command` 已接入 CTest。
 
 ## Now（当前优先）
 
 - 补齐命令与协议边界测试：非法输入、半包/粘包、错误语义一致性。
+- 补充端到端测试（`redis-cli`/脚本）覆盖真实请求链路。
 - 整理命令执行链路的错误处理与返回格式，减少隐式行为。
 - 完善文档与目录职责说明，保持实现与文档一致。
 - 建立基础质量门禁：本地默认跑通 `ctest --output-on-failure`。
 
 ## Next（下一阶段）
 
-- 引入并完善 TTL 能力：`EXPIRE/TTL/PTTL/PERSIST`。
 - 增强对象与存储抽象，降低 `command` 与底层实现耦合。
-- 扩展命令子集（按优先级逐步补齐 String 常用命令）。
-- 补充端到端测试（`redis-cli`/脚本）覆盖真实请求链路。
+- 扩展命令子集（按优先级逐步补齐 String 常用命令，如 `DECR/INCRBY/MGET/MSET/SET` 选项）。
+- 初步引入持久化骨架（AOF 追加写入与最小恢复链路）。
 
 ## Later（中长期）
 
