@@ -15,7 +15,7 @@
 
 - 网络层：单线程 `epoll`（LT）事件循环可用。
 - 协议层：RESP2 基础解析与编码可用。
-- 命令链路：`PING/SET/GET/DEL/EXISTS/INCR/EXPIRE/TTL/PTTL/PERSIST` 已打通。
+- 命令链路：`PING/SET/MSET/GET/MGET/DEL/EXISTS/INCR/INCRBY/DECR/EXPIRE/TTL/PTTL/PERSIST` 已打通。
 - 过期机制：惰性过期 + 主动过期扫描（cron 抽样）可用。
 - 存储层：`InMemoryDB + DICT + SDS + RedisObject` 基础能力可用。
 - 测试：`test_sds`、`test_dict`、`test_resp`、`test_command` 已接入 CTest。

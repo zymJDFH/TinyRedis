@@ -336,6 +336,42 @@ TEST_F(TinyRedisE2ETest, BasicCommandFlow) {
     ASSERT_EQ(out.type, RESPType::NULL_BULK);
 }
 
+TEST_F(TinyRedisE2ETest, CounterAndBatchCommandsFlow) {
+    RespClient client;
+    ASSERT_TRUE(client.connectTo(kPort));
+
+    ASSERT_TRUE(client.sendAll(buildRequest({"INCRBY", "ctr", "5"})));
+    RESPObject out;
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::INTEGER);
+    EXPECT_EQ(out.integer, 5);
+
+    ASSERT_TRUE(client.sendAll(buildRequest({"DECR", "ctr"})));
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::INTEGER);
+    EXPECT_EQ(out.integer, 4);
+
+    ASSERT_TRUE(client.sendAll(buildRequest({"MSET", "k1", "v1", "k2", "v2"})));
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::SIMPLE_STRING);
+    EXPECT_EQ(out.str, "OK");
+
+    ASSERT_TRUE(client.sendAll(buildRequest({"MGET", "k1", "missing", "k2"})));
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::ARRAY);
+    ASSERT_EQ(out.elements.size(), 3u);
+    ASSERT_EQ(out.elements[0].type, RESPType::BULK_STRING);
+    EXPECT_EQ(out.elements[0].str, "v1");
+    ASSERT_EQ(out.elements[1].type, RESPType::NULL_BULK);
+    ASSERT_EQ(out.elements[2].type, RESPType::BULK_STRING);
+    EXPECT_EQ(out.elements[2].str, "v2");
+
+    ASSERT_TRUE(client.sendAll(buildRequest({"EXISTS", "k1", "missing", "k2"})));
+    ASSERT_TRUE(client.readReply(out));
+    ASSERT_EQ(out.type, RESPType::INTEGER);
+    EXPECT_EQ(out.integer, 2);
+}
+
 TEST_F(TinyRedisE2ETest, TtlExpireAndPersistFlow) {
     RespClient client;
     ASSERT_TRUE(client.connectTo(kPort));

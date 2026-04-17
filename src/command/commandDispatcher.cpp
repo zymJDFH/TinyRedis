@@ -8,6 +8,11 @@
 namespace {
 constexpr size_t kActiveExpireSampleCount = 64;
 
+struct MGetValue {
+    bool exists;
+    std::string value;
+};
+
 std::string toUpperCopy(const std::string& s) {
     std::string out = s;
     std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
@@ -33,6 +38,18 @@ bool parseInt64(const std::string& s, long long& out) {
     } catch (const std::exception&) {
         return false;
     }
+}
+
+std::string encodeMGetReply(const std::vector<MGetValue>& values) {
+    std::string out = "*" + std::to_string(values.size()) + "\r\n";
+    for (const MGetValue& v : values) {
+        if (!v.exists) {
+            out += RESPEncoder::nullBulk();
+        } else {
+            out += RESPEncoder::bulkString(v.value);
+        }
+    }
+    return out;
 }
 } // namespace
 
@@ -65,6 +82,16 @@ std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv) {
         return RESPEncoder::simpleString("OK");
     }
 
+    if (cmd == "MSET") {
+        if (argv.size() < 3 || (argv.size() % 2) == 0) {
+            return wrongArity("mset");
+        }
+        for (size_t i = 1; i + 1 < argv.size(); i += 2) {
+            db_.set(argv[i], argv[i + 1]);
+        }
+        return RESPEncoder::simpleString("OK");
+    }
+
     if (cmd == "GET") {
         if (argv.size() != 2) {
             return wrongArity("get");
@@ -74,6 +101,23 @@ std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv) {
             return RESPEncoder::nullBulk();
         }
         return RESPEncoder::bulkString(value);
+    }
+
+    if (cmd == "MGET") {
+        if (argv.size() < 2) {
+            return wrongArity("mget");
+        }
+        std::vector<MGetValue> values;
+        values.reserve(argv.size() - 1);
+        for (size_t i = 1; i < argv.size(); ++i) {
+            std::string value;
+            if (!db_.get(argv[i], value)) {
+                values.push_back(MGetValue {false, ""});
+            } else {
+                values.push_back(MGetValue {true, std::move(value)});
+            }
+        }
+        return encodeMGetReply(values);
     }
 
     if (cmd == "DEL") {
@@ -88,10 +132,14 @@ std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv) {
     }
 
     if (cmd == "EXISTS") {
-        if (argv.size() != 2) {
+        if (argv.size() < 2) {
             return wrongArity("exists");
         }
-        return RESPEncoder::integer(db_.exists(argv[1]) ? 1 : 0);
+        long long existed = 0;
+        for (size_t i = 1; i < argv.size(); ++i) {
+            existed += db_.exists(argv[i]) ? 1 : 0;
+        }
+        return RESPEncoder::integer(existed);
     }
 
     if (cmd == "INCR") {
@@ -101,7 +149,38 @@ std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv) {
 
         long long newValue = 0;
         std::string err;
-        if (!db_.incr(argv[1], newValue, err)) {
+        if (!db_.incrBy(argv[1], 1, newValue, err)) {
+            return RESPEncoder::error("ERR " + err);
+        }
+        return RESPEncoder::integer(newValue);
+    }
+
+    if (cmd == "DECR") {
+        if (argv.size() != 2) {
+            return wrongArity("decr");
+        }
+
+        long long newValue = 0;
+        std::string err;
+        if (!db_.incrBy(argv[1], -1, newValue, err)) {
+            return RESPEncoder::error("ERR " + err);
+        }
+        return RESPEncoder::integer(newValue);
+    }
+
+    if (cmd == "INCRBY") {
+        if (argv.size() != 3) {
+            return wrongArity("incrby");
+        }
+
+        long long delta = 0;
+        if (!parseInt64(argv[2], delta)) {
+            return RESPEncoder::error("ERR value is not an integer or out of range");
+        }
+
+        long long newValue = 0;
+        std::string err;
+        if (!db_.incrBy(argv[1], delta, newValue, err)) {
             return RESPEncoder::error("ERR " + err);
         }
         return RESPEncoder::integer(newValue);

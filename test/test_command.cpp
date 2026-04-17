@@ -110,6 +110,40 @@ TEST(CommandDispatcherTest, ExistsAndIncrFlow) {
     EXPECT_EQ(dispatcher.dispatch({"EXISTS", "counter"}), ":1\r\n");
 }
 
+TEST(CommandDispatcherTest, DecrAndIncrByFlow) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"DECR", "n"}), ":-1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCRBY", "n", "10"}), ":9\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"GET", "n"}), "$1\r\n9\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCRBY", "n", "-3"}), ":6\r\n");
+
+    EXPECT_EQ(dispatcher.dispatch({"SET", "bad", "abc"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"DECR", "bad"}), "-ERR value is not an integer or out of range\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCRBY", "bad", "2"}), "-ERR value is not an integer or out of range\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCRBY", "n", "x"}), "-ERR value is not an integer or out of range\r\n");
+}
+
+TEST(CommandDispatcherTest, MSetAndMGetFlow) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"MSET", "k1", "v1", "k2", "v2"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"MGET", "k1", "missing", "k2"}), "*3\r\n$2\r\nv1\r\n$-1\r\n$2\r\nv2\r\n");
+
+    // MSET 覆盖已有值，并清理对应 TTL
+    EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k1", "10"}), ":1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"MSET", "k1", "nv1"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"TTL", "k1"}), ":-1\r\n");
+}
+
+TEST(CommandDispatcherTest, ExistsSupportsMultipleKeys) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"MSET", "a", "1", "b", "2"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXISTS", "a", "missing", "b"}), ":2\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXISTS", "a", "a"}), ":2\r\n");
+}
+
 TEST(CommandDispatcherTest, EmptyCommandError) {
     CommandDispatcher dispatcher;
     EXPECT_EQ(dispatcher.dispatch({}), "-ERR empty command\r\n");
@@ -122,6 +156,11 @@ TEST(CommandDispatcherTest, ErrorPaths) {
     EXPECT_EQ(dispatcher.dispatch({"GET"}), "-ERR wrong number of arguments for 'get' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXISTS"}), "-ERR wrong number of arguments for 'exists' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR"}), "-ERR wrong number of arguments for 'incr' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"DECR"}), "-ERR wrong number of arguments for 'decr' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCRBY"}), "-ERR wrong number of arguments for 'incrby' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"MGET"}), "-ERR wrong number of arguments for 'mget' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"MSET", "k1"}), "-ERR wrong number of arguments for 'mset' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"MSET", "k1", "v1", "k2"}), "-ERR wrong number of arguments for 'mset' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k"}), "-ERR wrong number of arguments for 'expire' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"TTL"}), "-ERR wrong number of arguments for 'ttl' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"PTTL"}), "-ERR wrong number of arguments for 'pttl' command\r\n");

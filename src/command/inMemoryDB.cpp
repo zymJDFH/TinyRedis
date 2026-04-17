@@ -13,6 +13,16 @@ RedisObject* asObject(void* p) {
 int64_t* asExpireAt(void* p) {
     return static_cast<int64_t*>(p);
 }
+
+bool addWouldOverflow(long long base, long long delta) {
+    if (delta > 0 && base > std::numeric_limits<long long>::max() - delta) {
+        return true;
+    }
+    if (delta < 0 && base < std::numeric_limits<long long>::min() - delta) {
+        return true;
+    }
+    return false;
+}
 } // namespace
 
 int64_t InMemoryDB::nowMs() {
@@ -140,6 +150,13 @@ bool InMemoryDB::exists(const std::string& key) {
 }
 
 bool InMemoryDB::incr(const std::string& key, long long& newValue, std::string& err) {
+    return incrBy(key, 1, newValue, err);
+}
+
+bool InMemoryDB::incrBy(const std::string& key,
+                        long long delta,
+                        long long& newValue,
+                        std::string& err) {
     expireIfNeeded(key);
 
     err.clear();
@@ -165,12 +182,12 @@ bool InMemoryDB::incr(const std::string& key, long long& newValue, std::string& 
         }
     }
 
-    if (value == std::numeric_limits<long long>::max()) {
+    if (addWouldOverflow(value, delta)) {
         err = "increment or decrement would overflow";
         return false;
     }
 
-    newValue = value + 1;
+    newValue = value + delta;
 
     RedisObject* newObj = createStringObject(std::to_string(newValue));
     kv_.set(SDS(key), newObj);

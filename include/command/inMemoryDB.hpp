@@ -21,6 +21,8 @@ public:
     bool exists(const std::string& key);
     // INCR key；返回 false 时 err 带错误信息。
     bool incr(const std::string& key, long long& newValue, std::string& err);
+    // INCRBY/DECR 的通用实现；delta 可正可负。
+    bool incrBy(const std::string& key, long long delta, long long& newValue, std::string& err);
 
     // EXPIRE key seconds；返回 1 表示设置成功，0 表示 key 不存在。
     int expire(const std::string& key, long long ttlSeconds);
