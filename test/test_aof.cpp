@@ -61,3 +61,71 @@ TEST(AOFTest, FailedWriteCommandIsNotAppended) {
 
     (void)std::filesystem::remove(path);
 }
+
+TEST(AOFTest, RewriteKeepsFinalState) {
+    const std::string path = tempAofPath("rewrite_final");
+    (void)std::filesystem::remove(path);
+
+    {
+        CommandDispatcher writer(true, path);
+        EXPECT_EQ(writer.dispatch({"SET", "k", "1"}), "+OK\r\n");
+        EXPECT_EQ(writer.dispatch({"SET", "k", "2"}), "+OK\r\n");
+        EXPECT_EQ(writer.dispatch({"INCR", "k"}), ":3\r\n");
+        EXPECT_EQ(writer.dispatch({"BGREWRITEAOF"}), "+OK\r\n");
+    }
+
+    {
+        CommandDispatcher reader(true, path);
+        ASSERT_TRUE(reader.loadAof()) << reader.lastError();
+        EXPECT_EQ(reader.dispatch({"GET", "k"}), "$1\r\n3\r\n");
+    }
+
+    (void)std::filesystem::remove(path);
+}
+
+TEST(AOFTest, RewriteDropsDeletedKeys) {
+    const std::string path = tempAofPath("rewrite_deleted");
+    (void)std::filesystem::remove(path);
+
+    {
+        CommandDispatcher writer(true, path);
+        EXPECT_EQ(writer.dispatch({"SET", "gone", "1"}), "+OK\r\n");
+        EXPECT_EQ(writer.dispatch({"SET", "alive", "2"}), "+OK\r\n");
+        EXPECT_EQ(writer.dispatch({"DEL", "gone"}), ":1\r\n");
+        EXPECT_EQ(writer.dispatch({"REWRITEAOF"}), "+OK\r\n");
+    }
+
+    {
+        CommandDispatcher reader(true, path);
+        ASSERT_TRUE(reader.loadAof()) << reader.lastError();
+        EXPECT_EQ(reader.dispatch({"GET", "gone"}), "$-1\r\n");
+        EXPECT_EQ(reader.dispatch({"GET", "alive"}), "$1\r\n2\r\n");
+    }
+
+    (void)std::filesystem::remove(path);
+}
+
+TEST(AOFTest, RewritePreservesTtl) {
+    const std::string path = tempAofPath("rewrite_ttl");
+    (void)std::filesystem::remove(path);
+
+    {
+        CommandDispatcher writer(true, path);
+        EXPECT_EQ(writer.dispatch({"SET", "ttl", "v"}), "+OK\r\n");
+        EXPECT_EQ(writer.dispatch({"EXPIRE", "ttl", "10"}), ":1\r\n");
+        EXPECT_EQ(writer.dispatch({"BGREWRITEAOF"}), "+OK\r\n");
+    }
+
+    {
+        CommandDispatcher reader(true, path);
+        ASSERT_TRUE(reader.loadAof()) << reader.lastError();
+        EXPECT_EQ(reader.dispatch({"GET", "ttl"}), "$1\r\nv\r\n");
+        const std::string ttlReply = reader.dispatch({"TTL", "ttl"});
+        ASSERT_FALSE(ttlReply.empty());
+        EXPECT_EQ(ttlReply.front(), ':');
+        EXPECT_NE(ttlReply, ":-1\r\n");
+        EXPECT_NE(ttlReply, ":-2\r\n");
+    }
+
+    (void)std::filesystem::remove(path);
+}
