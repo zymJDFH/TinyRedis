@@ -11,6 +11,7 @@ public:
 
     std::string dispatch(const std::vector<std::string>& argv);
     bool loadAof();
+    bool rewriteAof(std::string& err);
     const std::string& lastError() const;
     // 事件循环周期性调用：执行一次主动过期扫描。
     void cron();

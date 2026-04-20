@@ -303,3 +303,32 @@ size_t InMemoryDB::activeExpireCycle(size_t sampleCount) {
 
     return removed;
 }
+
+std::vector<DBSnapshotEntry> InMemoryDB::snapshot() {
+    (void)activeExpireCycle(expires_.size());
+
+    std::vector<DBSnapshotEntry> entries;
+    entries.reserve(kv_.size());
+    const int64_t now = nowMs();
+
+    kv_.forEach([&](const SDS& key, void* value) {
+        const std::string keyStr = key.c_str();
+        const std::string* strValue = getStringObjectValue(asObject(value));
+        if (strValue == nullptr) {
+            return;
+        }
+
+        int64_t expireAtMs = 0;
+        long long ttlMs = -1;
+        if (getExpireAtMs(keyStr, expireAtMs)) {
+            ttlMs = expireAtMs - now;
+            if (ttlMs <= 0) {
+                return;
+            }
+        }
+
+        entries.push_back(DBSnapshotEntry {keyStr, *strValue, ttlMs});
+    });
+
+    return entries;
+}

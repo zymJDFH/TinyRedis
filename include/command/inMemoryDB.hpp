@@ -5,6 +5,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
+
+struct DBSnapshotEntry {
+    std::string key;
+    std::string value;
+    long long ttlMs;
+};
 
 class InMemoryDB {
 public:
@@ -34,6 +41,8 @@ public:
     int persist(const std::string& key);
     // 主动过期扫描；最多检查 sampleCount 个 TTL 条目，返回本轮删除数量。
     size_t activeExpireCycle(size_t sampleCount);
+    // 导出当前有效 String 数据；ttlMs 为 -1 表示无过期时间。
+    std::vector<DBSnapshotEntry> snapshot();
 
 private:
     // 惰性过期检查：若 key 已过期则立即删除并返回 true。

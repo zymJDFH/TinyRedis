@@ -72,6 +72,52 @@ bool AOF::appendCommand(const std::vector<std::string>& argv, std::string& err) 
     return ok;
 }
 
+bool AOF::rewriteCommands(const std::vector<std::vector<std::string>>& commands, std::string& err) const {
+    err.clear();
+    if (!enabled_) {
+        return true;
+    }
+
+    const std::string tmpPath = path_ + ".tmp";
+    const int fd = ::open(tmpPath.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        err = std::strerror(errno);
+        return false;
+    }
+
+    bool ok = true;
+    for (const std::vector<std::string>& argv : commands) {
+        const std::string payload = RESPEncoder::array(argv);
+        if (!writeAll(fd, payload.data(), payload.size(), err)) {
+            ok = false;
+            break;
+        }
+    }
+
+    if (ok && ::fsync(fd) != 0) {
+        err = std::strerror(errno);
+        ok = false;
+    }
+
+    if (::close(fd) != 0 && ok) {
+        err = std::strerror(errno);
+        ok = false;
+    }
+
+    if (!ok) {
+        (void)::unlink(tmpPath.c_str());
+        return false;
+    }
+
+    if (::rename(tmpPath.c_str(), path_.c_str()) != 0) {
+        err = std::strerror(errno);
+        (void)::unlink(tmpPath.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 bool AOF::replay(const std::function<bool(const std::vector<std::string>&, std::string&)>& apply,
                  std::string& err) const {
     err.clear();

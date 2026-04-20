@@ -76,6 +76,26 @@ const std::string& CommandDispatcher::lastError() const {
     return lastError_;
 }
 
+bool CommandDispatcher::rewriteAof(std::string& err) {
+    err.clear();
+    std::vector<DBSnapshotEntry> entries = db_.snapshot();
+    std::vector<std::vector<std::string>> commands;
+    commands.reserve(entries.size() * 2);
+
+    for (const DBSnapshotEntry& entry : entries) {
+        commands.push_back({"SET", entry.key, entry.value});
+        if (entry.ttlMs >= 0) {
+            long long ttlSeconds = (entry.ttlMs + 999) / 1000;
+            if (ttlSeconds <= 0) {
+                ttlSeconds = 1;
+            }
+            commands.push_back({"EXPIRE", entry.key, std::to_string(ttlSeconds)});
+        }
+    }
+
+    return aof_.rewriteCommands(commands, err);
+}
+
 void CommandDispatcher::cron() {
     (void)db_.activeExpireCycle(kActiveExpireSampleCount);
 }
@@ -283,6 +303,17 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
             return appendErr;
         }
         return RESPEncoder::integer(result);
+    }
+
+    if (cmd == "REWRITEAOF" || cmd == "BGREWRITEAOF") {
+        if (argv.size() != 1) {
+            return wrongArity(cmd == "REWRITEAOF" ? "rewriteaof" : "bgrewriteaof");
+        }
+        std::string err;
+        if (!rewriteAof(err)) {
+            return RESPEncoder::error("ERR AOF rewrite failed: " + err);
+        }
+        return RESPEncoder::simpleString("OK");
     }
 
     return RESPEncoder::error("ERR unknown command '" + argv[0] + "'");
