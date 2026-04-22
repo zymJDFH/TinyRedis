@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <stdexcept>
+#include <string>
 
 #include "protocol/respEncoder.hpp"
 #include "protocol/respObject.hpp"
@@ -84,6 +85,17 @@ TEST(RESPParserTest, ParseNullBulkString) {
     EXPECT_EQ(out.type, RESPType::NULL_BULK);
 }
 
+TEST(RESPParserTest, ParseEmptyBulkString) {
+    RESPParser parser;
+    const std::string in = "$0\r\n\r\n";
+    parser.feed(in.data(), in.size());
+
+    RESPObject out;
+    ASSERT_TRUE(parser.parse(out));
+    EXPECT_EQ(out.type, RESPType::BULK_STRING);
+    EXPECT_EQ(out.str, "");
+}
+
 TEST(RESPParserTest, ParseEmptyArray) {
     RESPParser parser;
     const std::string in = "*0\r\n";
@@ -109,6 +121,29 @@ TEST(RESPParserTest, ParseArrayWithPartialSecondElement) {
     ASSERT_EQ(out.elements.size(), 2u);
     EXPECT_EQ(out.elements[0].str, "GET");
     EXPECT_EQ(out.elements[1].str, "key");
+}
+
+TEST(RESPParserTest, ParseBulkStringWithSplitTerminator) {
+    RESPParser parser;
+    const std::string partial = "$3\r\nabc\r";
+    parser.feed(partial.data(), partial.size());
+
+    RESPObject out;
+    EXPECT_FALSE(parser.parse(out));
+
+    parser.feed("\n", 1);
+    ASSERT_TRUE(parser.parse(out));
+    EXPECT_EQ(out.type, RESPType::BULK_STRING);
+    EXPECT_EQ(out.str, "abc");
+}
+
+TEST(RESPParserTest, ParseEmptyFeedReturnsFalse) {
+    RESPParser parser;
+    parser.feed(nullptr, 0);
+    parser.feed("", 0);
+
+    RESPObject out;
+    EXPECT_FALSE(parser.parse(out));
 }
 
 TEST(RESPParserTest, IncompleteSimpleStringReturnsFalse) {
@@ -138,6 +173,15 @@ TEST(RESPParserTest, InvalidIntegerContentThrows) {
     EXPECT_THROW(parser.parse(out), std::exception);
 }
 
+TEST(RESPParserTest, InvalidIntegerWithTrailingCharactersThrows) {
+    RESPParser parser;
+    const std::string in = ":123abc\r\n";
+    parser.feed(in.data(), in.size());
+
+    RESPObject out;
+    EXPECT_THROW(parser.parse(out), std::runtime_error);
+}
+
 TEST(RESPParserTest, InvalidBulkLengthThrows) {
     RESPParser parser;
     const std::string in = "$x\r\n";
@@ -145,6 +189,24 @@ TEST(RESPParserTest, InvalidBulkLengthThrows) {
 
     RESPObject out;
     EXPECT_THROW(parser.parse(out), std::exception);
+}
+
+TEST(RESPParserTest, InvalidBulkLengthWithTrailingCharactersThrows) {
+    RESPParser parser;
+    const std::string in = "$3abc\r\n";
+    parser.feed(in.data(), in.size());
+
+    RESPObject out;
+    EXPECT_THROW(parser.parse(out), std::runtime_error);
+}
+
+TEST(RESPParserTest, BulkLengthLessThanMinusOneThrows) {
+    RESPParser parser;
+    const std::string in = "$-2\r\n";
+    parser.feed(in.data(), in.size());
+
+    RESPObject out;
+    EXPECT_THROW(parser.parse(out), std::runtime_error);
 }
 
 TEST(RESPParserTest, NullArrayThrows) {
@@ -181,4 +243,13 @@ TEST(RESPParserTest, InvalidArrayLengthThrows) {
 
     RESPObject out;
     EXPECT_THROW(parser.parse(out), std::exception);
+}
+
+TEST(RESPParserTest, InvalidArrayLengthWithTrailingCharactersThrows) {
+    RESPParser parser;
+    const std::string in = "*2x\r\n";
+    parser.feed(in.data(), in.size());
+
+    RESPObject out;
+    EXPECT_THROW(parser.parse(out), std::runtime_error);
 }

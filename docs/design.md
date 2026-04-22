@@ -176,6 +176,12 @@ ptr      = std::string*
 
 网络服务中的 `CommandDispatcher` 默认开启 AOF，默认文件为运行目录下的 `appendonly.aof`。AOF 文件不存在时，启动恢复按空库处理。
 
+AOF 当前触发方式：
+
+- 自动追加：网络服务执行写命令成功后，会自动追加到 AOF。
+- 自动恢复：服务启动时会自动调用 `loadAof` 回放已有 AOF。
+- 手动重写：`REWRITEAOF` / `BGREWRITEAOF` 需要客户端显式发送命令触发；当前两者都是同步重写。
+
 运行时写入：
 
 ```text

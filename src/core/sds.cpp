@@ -1,7 +1,48 @@
 #include "../../include/core/sds.hpp"
+
+#include <limits>
+
 //拿类型标志
 static inline uint8_t sds_flags(const char *buf){
     return *(buf-1);
+}
+
+static void sds_set_header(void* sh, uint8_t type, size_t len, size_t alloc) {
+    switch (type)
+    {
+        case SDS::TYPE_8:
+        {
+            auto* h = static_cast<SdsHdr8*>(sh);
+            h->len = static_cast<uint8_t>(len);
+            h->alloc = static_cast<uint8_t>(alloc);
+            h->flags = type;
+            break;
+        }
+        case SDS::TYPE_16:
+        {
+            auto* h = static_cast<SdsHdr16*>(sh);
+            h->len = static_cast<uint16_t>(len);
+            h->alloc = static_cast<uint16_t>(alloc);
+            h->flags = type;
+            break;
+        }
+        case SDS::TYPE_32:
+        {
+            auto* h = static_cast<SdsHdr32*>(sh);
+            h->len = static_cast<uint32_t>(len);
+            h->alloc = static_cast<uint32_t>(alloc);
+            h->flags = type;
+            break;
+        }
+        case SDS::TYPE_64:
+        {
+            auto* h = static_cast<SdsHdr64*>(sh);
+            h->len = static_cast<uint64_t>(len);
+            h->alloc = static_cast<uint64_t>(alloc);
+            h->flags = type;
+            break;
+        }
+    }
 }
 
 //选头部类型
@@ -41,48 +82,11 @@ void SDS::init(const char*str,size_t len){
     if(!sh)throw std::bad_alloc();
     buf_=(char*)sh+hdrlen;
 
-    memcpy(buf_,str,len);
-    buf_[len]='\0';
-
-    switch (type)
-    {
-        case TYPE_8:
-        {
-            auto* h = (SdsHdr8*)sh;
-            h->len = len;
-            h->alloc = len;
-            h->flags = type;
-            break;
-        }
-
-        case TYPE_16:
-        {
-            auto* h = (SdsHdr16*)sh;
-            h->len = len;
-            h->alloc = len;
-            h->flags = type;
-            break;
-        }
-
-        case TYPE_32:
-        {
-            auto* h = (SdsHdr32*)sh;
-            h->len = len;
-            h->alloc = len;
-            h->flags = type;
-            break;
-        }
-
-        case TYPE_64:
-        {
-            auto* h = (SdsHdr64*)sh;
-            h->len = len;
-            h->alloc = len;
-            h->flags = type;
-            break;
-        }
-    
+    if (len > 0) {
+        memcpy(buf_,str,len);
     }
+    buf_[len]='\0';
+    sds_set_header(sh, type, len, len);
 }
 
 void SDS::destroy(){
@@ -156,6 +160,9 @@ void SDS::makeRoomFor(size_t addlen){
     size_t len=this->len();
     size_t alloc =capacity();
     if(alloc-len>=addlen)return ;
+    if (addlen > std::numeric_limits<size_t>::max() - len) {
+        throw std::length_error("SDS length overflow");
+    }
     size_t newlen=len+addlen;
     size_t newalloc;
 
@@ -167,39 +174,26 @@ void SDS::makeRoomFor(size_t addlen){
     uint8_t type=select_type(newalloc);
     size_t hdrlen = hdr_size(type);
 
-    void* oldsh = buf_ - hdr_size(sds_flags(buf_) & TYPE_MASK);
-    void* newsh = realloc(oldsh, hdrlen + newalloc + 1);
-    if(!newsh)
-        throw std::bad_alloc();
+    const uint8_t oldtype = sds_flags(buf_) & TYPE_MASK;
+    const size_t oldhdrlen = hdr_size(oldtype);
+    void* oldsh = buf_ - oldhdrlen;
+    void* newsh = nullptr;
 
-    buf_ = (char*)newsh + hdrlen;
-    switch(type)
-    {
-        case TYPE_8:
-        {
-            auto* h = (SdsHdr8*)newsh;
-            h->alloc = newalloc;
-            break;
-        }
-        case TYPE_16:
-        {
-            auto* h = (SdsHdr16*)newsh;
-            h->alloc = newalloc;
-            break;
-        }
-        case TYPE_32:
-        {
-            auto* h = (SdsHdr32*)newsh;
-            h->alloc = newalloc;
-            break;
-        }
-        case TYPE_64:
-        {
-            auto* h = (SdsHdr64*)newsh;
-            h->alloc = newalloc;
-            break;
-        }
+    if (oldtype == type) {
+        newsh = realloc(oldsh, hdrlen + newalloc + 1);
+        if(!newsh)
+            throw std::bad_alloc();
+    } else {
+        newsh = malloc(hdrlen + newalloc + 1);
+        if(!newsh)
+            throw std::bad_alloc();
+        char* newbuf = static_cast<char*>(newsh) + hdrlen;
+        memcpy(newbuf, buf_, len + 1);
+        free(oldsh);
     }
+
+    buf_ = static_cast<char*>(newsh) + hdrlen;
+    sds_set_header(newsh, type, len, newalloc);
 }
 void SDS::append(const char* str, size_t addlen){
     size_t curlen = len();

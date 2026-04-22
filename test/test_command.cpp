@@ -81,6 +81,25 @@ TEST(CommandParserTest, RejectArrayWithNonStringElement) {
     EXPECT_EQ(err, "protocol error: command element must be string");
 }
 
+TEST(CommandParserTest, RejectArrayWithNullBulkElement) {
+    RESPObject cmd;
+    cmd.type = RESPType::ARRAY;
+
+    RESPObject e1;
+    e1.type = RESPType::BULK_STRING;
+    e1.str = "GET";
+    RESPObject e2;
+    e2.type = RESPType::NULL_BULK;
+
+    cmd.elements = {e1, e2};
+
+    std::vector<std::string> argv;
+    std::string err;
+    ASSERT_FALSE(CommandParser::toArgv(cmd, argv, err));
+    EXPECT_EQ(err, "protocol error: command element must be string");
+    EXPECT_TRUE(argv.empty());
+}
+
 TEST(CommandDispatcherTest, PingSetGetDelFlow) {
     CommandDispatcher dispatcher;
 
@@ -152,8 +171,10 @@ TEST(CommandDispatcherTest, EmptyCommandError) {
 TEST(CommandDispatcherTest, ErrorPaths) {
     CommandDispatcher dispatcher;
 
+    EXPECT_EQ(dispatcher.dispatch({"PING", "a", "b"}), "-ERR wrong number of arguments for 'ping' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"SET", "k"}), "-ERR wrong number of arguments for 'set' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"GET"}), "-ERR wrong number of arguments for 'get' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"DEL"}), "-ERR wrong number of arguments for 'del' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXISTS"}), "-ERR wrong number of arguments for 'exists' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR"}), "-ERR wrong number of arguments for 'incr' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"DECR"}), "-ERR wrong number of arguments for 'decr' command\r\n");
@@ -165,11 +186,17 @@ TEST(CommandDispatcherTest, ErrorPaths) {
     EXPECT_EQ(dispatcher.dispatch({"TTL"}), "-ERR wrong number of arguments for 'ttl' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"PTTL"}), "-ERR wrong number of arguments for 'pttl' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"PERSIST"}), "-ERR wrong number of arguments for 'persist' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"REWRITEAOF", "extra"}), "-ERR wrong number of arguments for 'rewriteaof' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"BGREWRITEAOF", "extra"}), "-ERR wrong number of arguments for 'bgrewriteaof' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k", "abc"}), "-ERR value is not an integer or out of range\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k", "10x"}), "-ERR value is not an integer or out of range\r\n");
     EXPECT_EQ(dispatcher.dispatch({"SET", "n", "abc"}), "+OK\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR", "n"}), "-ERR value is not an integer or out of range\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INCRBY", "n", "2x"}), "-ERR value is not an integer or out of range\r\n");
     EXPECT_EQ(dispatcher.dispatch({"SET", "mx", "9223372036854775807"}), "+OK\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INCR", "mx"}), "-ERR increment or decrement would overflow\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"SET", "mn", "-9223372036854775808"}), "+OK\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"DECR", "mn"}), "-ERR increment or decrement would overflow\r\n");
     EXPECT_EQ(dispatcher.dispatch({"UNKNOWN"}), "-ERR unknown command 'UNKNOWN'\r\n");
 }
 

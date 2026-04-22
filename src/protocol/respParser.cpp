@@ -2,6 +2,23 @@
 
 #include <stdexcept>
 
+namespace {
+long long parseRespIntegerLine(const std::string& line, const char* what) {
+    try {
+        size_t parsed = 0;
+        const long long value = std::stoll(line, &parsed, 10);
+        if (parsed != line.size()) {
+            throw std::runtime_error(std::string("invalid ") + what);
+        }
+        return value;
+    } catch (const std::invalid_argument&) {
+        throw std::runtime_error(std::string("invalid ") + what);
+    } catch (const std::out_of_range&) {
+        throw std::runtime_error(std::string("invalid ") + what);
+    }
+}
+} // namespace
+
 RESPParser::RESPParser()
     : pos_(0) {}
 
@@ -96,7 +113,7 @@ bool RESPParser::parseInteger(RESPObject& out) {
     }
 
     out.type = RESPType::INTEGER;
-    out.integer = std::stoll(line);
+    out.integer = parseRespIntegerLine(line, "integer");
     out.str.clear();
     out.elements.clear();
     return true;
@@ -113,13 +130,16 @@ bool RESPParser::parseBulkString(RESPObject& out) {
         return false;
     }
 
-    const long long len = std::stoll(line);
-    if (len < 0) {
+    const long long len = parseRespIntegerLine(line, "bulk string length");
+    if (len == -1) {
         out.type = RESPType::NULL_BULK;
         out.str.clear();
         out.integer = 0;
         out.elements.clear();
         return true;
+    }
+    if (len < -1) {
+        throw std::runtime_error("invalid bulk string length");
     }
 
     if (buffer_.size() - pos_ < static_cast<size_t>(len) + 2) {
@@ -150,7 +170,7 @@ bool RESPParser::parseArray(RESPObject& out) {
         return false;
     }
 
-    const long long count = std::stoll(line);
+    const long long count = parseRespIntegerLine(line, "array length");
     if (count < 0) {
         throw std::runtime_error("null array is not supported yet");
     }
@@ -159,7 +179,9 @@ bool RESPParser::parseArray(RESPObject& out) {
     out.str.clear();
     out.integer = 0;
     out.elements.clear();
-    out.elements.reserve(static_cast<size_t>(count));
+    if (static_cast<size_t>(count) <= buffer_.size()) {
+        out.elements.reserve(static_cast<size_t>(count));
+    }
 
     for (long long i = 0; i < count; ++i) {
         RESPObject element;

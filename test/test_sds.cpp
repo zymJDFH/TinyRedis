@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <string>
 #include "core/sds.hpp"
 
 // Test default constructor
@@ -97,4 +98,52 @@ TEST(SDSTest, AppendStringView) {
     
     EXPECT_STREQ(s.c_str(), "hello world");
     EXPECT_EQ(s.len(), 11);
+}
+
+TEST(SDSTest, AppendCrossesType8ToType16Header) {
+    const std::string initial(255, 'a');
+    SDS s{std::string_view(initial)};
+
+    s.append("b", 1);
+
+    EXPECT_EQ(s.len(), 256u);
+    EXPECT_GE(s.capacity(), s.len());
+    EXPECT_EQ(std::string(s.c_str(), s.len()), initial + "b");
+}
+
+TEST(SDSTest, AppendCrossesType16ToType32Header) {
+    const std::string initial(65535, 'x');
+    SDS s{std::string_view(initial)};
+
+    s.append("y", 1);
+
+    EXPECT_EQ(s.len(), 65536u);
+    EXPECT_GE(s.capacity(), s.len());
+    EXPECT_EQ(std::string(s.c_str(), s.len()), initial + "y");
+}
+
+TEST(SDSTest, ClearAfterHeaderGrowthKeepsStringUsable) {
+    const std::string initial(255, 'a');
+    SDS s{std::string_view(initial)};
+    s.append("b", 1);
+    ASSERT_EQ(s.len(), 256u);
+
+    const size_t grownCapacity = s.capacity();
+    s.clear();
+    s.append("ok", 2);
+
+    EXPECT_EQ(s.len(), 2u);
+    EXPECT_EQ(s.capacity(), grownCapacity);
+    EXPECT_STREQ(s.c_str(), "ok");
+}
+
+TEST(SDSTest, AppendEmptyDoesNotChangeContent) {
+    SDS s("hello");
+    const size_t oldCapacity = s.capacity();
+
+    s.append("", 0);
+
+    EXPECT_EQ(s.len(), 5u);
+    EXPECT_EQ(s.capacity(), oldCapacity);
+    EXPECT_STREQ(s.c_str(), "hello");
 }
