@@ -26,9 +26,10 @@ TinyRedis 当前采用单线程 `epoll` 事件循环模型，主请求链路按 
 ![TinyRedis 架构图](docs/assets/v0.1.png)
 
 ## 当前能力概览
-- 已实现命令：`PING/SET/MSET/GET/MGET/DEL/EXISTS/INCR/INCRBY/DECR/EXPIRE/TTL/PTTL/PERSIST/REWRITEAOF/BGREWRITEAOF`
+- 已实现命令：`PING/SET/MSET/GET/MGET/DEL/EXISTS/INCR/INCRBY/DECR/EXPIRE/TTL/PTTL/PERSIST/INFO/REWRITEAOF/BGREWRITEAOF`
 - 过期策略：惰性过期（访问时检查）+ 主动过期（事件循环周期触发抽样清理）
 - 配置：支持配置文件和启动参数设置端口、AOF 开关、AOF 文件路径、`appendfsync` 策略
+- 观测：支持 `INFO` 输出 server、clients、stats、persistence、replication 基础指标
 - 持久化：AOF（写命令追加 + 启动重放恢复 + 同步 rewrite + `always/everysec/no` fsync 策略）
 - 测试基线：`test_sds`、`test_dict`、`test_resp`、`test_config`、`test_command`、`test_aof`、`test_e2e`（已接入 CTest）
 

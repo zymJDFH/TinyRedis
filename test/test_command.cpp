@@ -200,6 +200,44 @@ TEST(CommandDispatcherTest, ErrorPaths) {
     EXPECT_EQ(dispatcher.dispatch({"UNKNOWN"}), "-ERR unknown command 'UNKNOWN'\r\n");
 }
 
+TEST(CommandDispatcherTest, InfoReturnsMetricsAndAofState) {
+    ServerMetrics metrics;
+    metrics.tcpPort.store(6380);
+    metrics.connectedClients.store(2);
+    metrics.totalConnectionsReceived.store(5);
+
+    CommandDispatcher dispatcher(true, "/tmp/tinyredis-info-test.aof", AofFsyncPolicy::EverySec, &metrics);
+
+    EXPECT_EQ(dispatcher.dispatch({"PING"}), "+PONG\r\n");
+    const std::string reply = dispatcher.dispatch({"INFO"});
+
+    EXPECT_NE(reply.find("# Server\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("redis_version:tinyredis\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("tcp_port:6380\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("# Clients\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("connected_clients:2\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("total_connections_received:5\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("# Stats\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("total_commands_processed:2\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("# Persistence\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("aof_enabled:1\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("aof_filename:/tmp/tinyredis-info-test.aof\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("aof_fsync:everysec\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("# Replication\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("role:master\r\n"), std::string::npos);
+}
+
+TEST(CommandDispatcherTest, InfoSupportsSectionFilter) {
+    CommandDispatcher dispatcher;
+    const std::string reply = dispatcher.dispatch({"INFO", "persistence"});
+
+    EXPECT_NE(reply.find("# Persistence\r\n"), std::string::npos);
+    EXPECT_EQ(reply.find("# Server\r\n"), std::string::npos);
+    EXPECT_EQ(reply.find("# Clients\r\n"), std::string::npos);
+    EXPECT_EQ(dispatcher.dispatch({"INFO", "unknown"}), "-ERR unsupported INFO section\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"INFO", "server", "extra"}), "-ERR wrong number of arguments for 'info' command\r\n");
+}
+
 TEST(CommandDispatcherTest, DelMultipleKeysCountsOnlyExisting) {
     CommandDispatcher dispatcher;
 

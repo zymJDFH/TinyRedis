@@ -2,6 +2,7 @@
 
 #include "../config/serverConfig.hpp"
 #include "../command/commandDispatcher.hpp"
+#include "../metrics/serverMetrics.hpp"
 #include "../protocol/respParser.hpp"
 
 #include <string>
@@ -44,6 +45,7 @@ private:
     int epollFd_;
 
     ServerConfig config_;
+    ServerMetrics metrics_;
     CommandDispatcher dispatcher_;
     std::unordered_map<int, ClientSession> clients_;
 };

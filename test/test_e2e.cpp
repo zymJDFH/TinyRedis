@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <poll.h>
 #include <string>
 #include <thread>
@@ -81,7 +82,7 @@ public:
         stop();
     }
 
-    bool start(const std::string& serverBinary, int port) {
+    bool start(const std::string& serverBinary, int port, const std::string& configPath) {
         stop();
         port_ = port;
 
@@ -92,7 +93,7 @@ public:
 
         if (pid_ == 0) {
             const std::string portStr = std::to_string(port_);
-            ::execl(serverBinary.c_str(), serverBinary.c_str(), portStr.c_str(), nullptr);
+            ::execl(serverBinary.c_str(), serverBinary.c_str(), portStr.c_str(), configPath.c_str(), nullptr);
             _exit(127);
         }
 
@@ -272,13 +273,23 @@ protected:
         }
 
         const std::string serverBinary = getExecutableDir() + "/tinyredis";
-        serverStarted_ = server_.start(serverBinary, kPort);
+        configPath_ = "/tmp/tinyredis_e2e_" + std::to_string(static_cast<long long>(::getpid())) + ".conf";
+        {
+            std::ofstream out(configPath_);
+            out << "port " << kPort << "\n";
+            out << "appendonly no\n";
+        }
+        serverStarted_ = server_.start(serverBinary, kPort, configPath_);
     }
 
     static void TearDownTestSuite() {
         if (serverStarted_) {
             server_.stop();
             serverStarted_ = false;
+        }
+        if (!configPath_.empty()) {
+            (void)std::filesystem::remove(configPath_);
+            configPath_.clear();
         }
     }
 
@@ -304,6 +315,7 @@ private:
     static inline ServerProcess server_;
     static inline bool tcpAllowed_ = false;
     static inline bool serverStarted_ = false;
+    static inline std::string configPath_;
 };
 
 TEST_F(TinyRedisE2ETest, BasicCommandFlow) {

@@ -37,7 +37,10 @@ EpollServer::EpollServer(ServerConfig config)
       listenFd_(-1),
       epollFd_(-1),
       config_(std::move(config)),
-      dispatcher_(config_.appendOnly, config_.appendFilename, config_.appendFsync) {}
+      metrics_(),
+      dispatcher_(config_.appendOnly, config_.appendFilename, config_.appendFsync, &metrics_) {
+    metrics_.tcpPort.store(port_, std::memory_order_relaxed);
+}
 
 EpollServer::~EpollServer() {
     for (const auto& [fd, _] : clients_) {
@@ -150,7 +153,9 @@ bool EpollServer::updateClientEvents(int fd, bool wantWrite) {
 
 void EpollServer::closeClient(int fd) {
     ::epoll_ctl(epollFd_, EPOLL_CTL_DEL, fd, nullptr);
-    clients_.erase(fd);
+    if (clients_.erase(fd) > 0) {
+        metrics_.onConnectionClosed();
+    }
     ::close(fd);
 }
 
@@ -183,6 +188,7 @@ void EpollServer::acceptClients() {
         }
 
         clients_.emplace(fd, ClientSession {});
+        metrics_.onConnectionAccepted();
     }
 }
 

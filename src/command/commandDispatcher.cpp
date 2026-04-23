@@ -3,7 +3,9 @@
 #include "../../include/protocol/respEncoder.hpp"
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 #include <stdexcept>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -52,10 +54,21 @@ std::string encodeMGetReply(const std::vector<MGetValue>& values) {
     }
     return out;
 }
+
+bool sectionMatches(const std::string& requested, const std::string& section) {
+    return requested.empty() || requested == "ALL" || requested == "DEFAULT" || requested == section;
+}
 } // namespace
 
-CommandDispatcher::CommandDispatcher(bool enableAof, std::string aofPath, AofFsyncPolicy fsyncPolicy)
-    : db_(), aof_(enableAof, std::move(aofPath), fsyncPolicy), lastError_() {}
+CommandDispatcher::CommandDispatcher(bool enableAof,
+                                     std::string aofPath,
+                                     AofFsyncPolicy fsyncPolicy,
+                                     ServerMetrics* metrics)
+    : db_(),
+      aof_(enableAof, std::move(aofPath), fsyncPolicy),
+      localMetrics_(),
+      metrics_(metrics == nullptr ? &localMetrics_ : metrics),
+      lastError_() {}
 
 bool CommandDispatcher::loadAof() {
     lastError_.clear();
@@ -106,7 +119,53 @@ void CommandDispatcher::cron() {
 }
 
 std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv) {
+    metrics_->onCommandProcessed();
     return dispatchInternal(argv, false);
+}
+
+std::string CommandDispatcher::buildInfoReply(const std::string& section) const {
+    std::ostringstream out;
+
+    if (sectionMatches(section, "SERVER")) {
+        out << "# Server\r\n";
+        out << "redis_version:tinyredis\r\n";
+        out << "process_id:" << static_cast<long long>(::getpid()) << "\r\n";
+        out << "tcp_port:" << metrics_->tcpPort.load(std::memory_order_relaxed) << "\r\n";
+        out << "uptime_in_seconds:" << metrics_->uptimeSeconds() << "\r\n";
+        out << "\r\n";
+    }
+
+    if (sectionMatches(section, "CLIENTS")) {
+        out << "# Clients\r\n";
+        out << "connected_clients:" << metrics_->connectedClients.load(std::memory_order_relaxed) << "\r\n";
+        out << "total_connections_received:"
+            << metrics_->totalConnectionsReceived.load(std::memory_order_relaxed) << "\r\n";
+        out << "\r\n";
+    }
+
+    if (sectionMatches(section, "STATS")) {
+        out << "# Stats\r\n";
+        out << "total_commands_processed:"
+            << metrics_->totalCommandsProcessed.load(std::memory_order_relaxed) << "\r\n";
+        out << "\r\n";
+    }
+
+    if (sectionMatches(section, "PERSISTENCE")) {
+        out << "# Persistence\r\n";
+        out << "aof_enabled:" << (aof_.enabled() ? 1 : 0) << "\r\n";
+        out << "aof_filename:" << aof_.path() << "\r\n";
+        out << "aof_fsync:" << aofFsyncPolicyName(aof_.fsyncPolicy()) << "\r\n";
+        out << "\r\n";
+    }
+
+    if (sectionMatches(section, "REPLICATION")) {
+        out << "# Replication\r\n";
+        out << "role:master\r\n";
+        out << "connected_slaves:0\r\n";
+        out << "\r\n";
+    }
+
+    return RESPEncoder::bulkString(out.str());
 }
 
 std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& argv, bool replayingAof) {
@@ -308,6 +367,26 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
             return appendErr;
         }
         return RESPEncoder::integer(result);
+    }
+
+    if (cmd == "INFO") {
+        if (argv.size() > 2) {
+            return wrongArity("info");
+        }
+
+        const std::string section = argv.size() == 2 ? toUpperCopy(argv[1]) : "";
+        if (!section.empty() &&
+            section != "ALL" &&
+            section != "DEFAULT" &&
+            section != "SERVER" &&
+            section != "CLIENTS" &&
+            section != "STATS" &&
+            section != "PERSISTENCE" &&
+            section != "REPLICATION") {
+            return RESPEncoder::error("ERR unsupported INFO section");
+        }
+
+        return buildInfoReply(section);
     }
 
     if (cmd == "REWRITEAOF" || cmd == "BGREWRITEAOF") {

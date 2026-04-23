@@ -12,6 +12,7 @@
 - 命令层：命令解析、参数校验、大小写不敏感分发、Redis 风格错误响应。
 - 数据层：String 类型 KV 存储，支持基础读写、批量读写、整数自增自减。
 - 过期机制：TTL 元信息、惰性过期、事件循环中周期触发的主动过期。
+- 观测能力：`INFO` 命令输出服务、连接、命令统计、AOF 与复制基础状态。
 - 持久化：AOF 追加写入、启动 replay、同步 rewrite，并支持 `always/everysec/no` fsync 策略。
 - 测试：SDS、DICT、RESP、Config、Command、AOF 和 TCP E2E 测试均接入 CTest。
 
@@ -54,6 +55,7 @@ sidecar        AOF / cron
 | `protocol` | `respParser.hpp/.cpp`, `respEncoder.hpp/.cpp` | RESP2 请求解析与响应编码 |
 | `command` | `commandParser.hpp/.cpp`, `commandDispatcher.hpp/.cpp` | RESP 对象转 argv、命令分发、参数校验、AOF 调用 |
 | `config` | `serverConfig.hpp/.cpp` | 配置文件解析、服务启动配置 |
+| `metrics` | `serverMetrics.hpp` | 运行期指标：启动时间、连接数、累计连接数、累计命令数 |
 | `storage` | `inMemoryDB.hpp/.cpp` | KV 数据、TTL 元信息、快照导出 |
 | `persistentence` | `aof.hpp/.cpp` | AOF 追加、回放、重写 |
 | `net` | `epollServer.hpp/.cpp` | TCP 监听、非阻塞 IO、epoll 事件循环、客户端会话 |
@@ -142,7 +144,13 @@ ClientSession
 | `PTTL key` | 1 个参数 | Integer | `-2` 不存在，`-1` 永不过期，`>=0` 为剩余毫秒数 |
 | `PERSIST key` | 1 个参数 | Integer | 移除 TTL 成功返回 1；key 不存在或没有 TTL 返回 0 |
 
-### 4.6 AOF 命令
+### 4.6 管理命令
+
+| 命令 | 参数 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `INFO [section]` | 0 或 1 个参数 | Bulk String | 输出运行状态；支持 `server/clients/stats/persistence/replication` 分段 |
+
+### 4.7 AOF 命令
 
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
