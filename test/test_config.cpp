@@ -22,6 +22,7 @@ TEST(ServerConfigTest, LoadSupportedDirectives) {
         out << "appendonly no\n";
         out << "appendfilename /tmp/tinyredis-test.aof\n";
         out << "appendfsync everysec\n";
+        out << "replicaof 127.0.0.1 6379\n";
     }
 
     ServerConfig config;
@@ -32,6 +33,9 @@ TEST(ServerConfigTest, LoadSupportedDirectives) {
     EXPECT_FALSE(config.appendOnly);
     EXPECT_EQ(config.appendFilename, "/tmp/tinyredis-test.aof");
     EXPECT_EQ(config.appendFsync, AofFsyncPolicy::EverySec);
+    EXPECT_TRUE(config.replication.isReplica());
+    EXPECT_EQ(config.replication.masterHost, "127.0.0.1");
+    EXPECT_EQ(config.replication.masterPort, 6379);
 
     (void)std::filesystem::remove(path);
 }
@@ -62,6 +66,21 @@ TEST(ServerConfigTest, RejectUnknownDirective) {
     std::string err;
     EXPECT_FALSE(loadServerConfig(path, config, err));
     EXPECT_NE(err.find("unknown directive"), std::string::npos);
+
+    (void)std::filesystem::remove(path);
+}
+
+TEST(ServerConfigTest, RejectInvalidReplicaof) {
+    const std::string path = tempConfigPath("bad_replicaof");
+    {
+        std::ofstream out(path);
+        out << "replicaof 127.0.0.1 abc\n";
+    }
+
+    ServerConfig config;
+    std::string err;
+    EXPECT_FALSE(loadServerConfig(path, config, err));
+    EXPECT_NE(err.find("invalid replicaof port"), std::string::npos);
 
     (void)std::filesystem::remove(path);
 }

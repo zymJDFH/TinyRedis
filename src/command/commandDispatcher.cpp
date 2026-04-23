@@ -63,11 +63,14 @@ bool sectionMatches(const std::string& requested, const std::string& section) {
 CommandDispatcher::CommandDispatcher(bool enableAof,
                                      std::string aofPath,
                                      AofFsyncPolicy fsyncPolicy,
-                                     ServerMetrics* metrics)
+                                     ServerMetrics* metrics,
+                                     ReplicationState* replication)
     : db_(),
       aof_(enableAof, std::move(aofPath), fsyncPolicy),
       localMetrics_(),
       metrics_(metrics == nullptr ? &localMetrics_ : metrics),
+      localReplication_(),
+      replication_(replication == nullptr ? &localReplication_ : replication),
       lastError_() {}
 
 bool CommandDispatcher::loadAof() {
@@ -91,6 +94,10 @@ const std::string& CommandDispatcher::lastError() const {
 
 bool CommandDispatcher::rewriteAof(std::string& err) {
     err.clear();
+    return aof_.rewriteCommands(snapshotCommands(), err);
+}
+
+std::vector<std::vector<std::string>> CommandDispatcher::snapshotCommands() {
     std::vector<DBSnapshotEntry> entries = db_.snapshot();
     std::vector<std::vector<std::string>> commands;
     commands.reserve(entries.size() * 2);
@@ -106,7 +113,44 @@ bool CommandDispatcher::rewriteAof(std::string& err) {
         }
     }
 
-    return aof_.rewriteCommands(commands, err);
+    return commands;
+}
+
+std::string CommandDispatcher::fullResyncPayload() {
+    std::string out = RESPEncoder::simpleString(
+        "FULLRESYNC " + replication_->masterReplId + " " + std::to_string(replication_->masterReplOffset));
+    for (const std::vector<std::string>& argv : snapshotCommands()) {
+        out += RESPEncoder::array(argv);
+    }
+    return out;
+}
+
+bool CommandDispatcher::applyReplicationCommand(const std::vector<std::string>& argv, std::string& err) {
+    err.clear();
+    const std::string reply = dispatchInternal(argv, true);
+    if (!reply.empty() && reply[0] == '-') {
+        err = reply;
+        return false;
+    }
+    return true;
+}
+
+bool CommandDispatcher::isWriteCommand(const std::string& cmd) const {
+    return cmd == "SET" ||
+           cmd == "MSET" ||
+           cmd == "DEL" ||
+           cmd == "INCR" ||
+           cmd == "INCRBY" ||
+           cmd == "DECR" ||
+           cmd == "EXPIRE" ||
+           cmd == "PERSIST";
+}
+
+bool CommandDispatcher::isReplicableWriteCommand(const std::vector<std::string>& argv) const {
+    if (argv.empty()) {
+        return false;
+    }
+    return isWriteCommand(toUpperCopy(argv[0]));
 }
 
 void CommandDispatcher::cron() {
@@ -160,8 +204,17 @@ std::string CommandDispatcher::buildInfoReply(const std::string& section) const 
 
     if (sectionMatches(section, "REPLICATION")) {
         out << "# Replication\r\n";
-        out << "role:master\r\n";
-        out << "connected_slaves:0\r\n";
+        if (replication_->isReplica()) {
+            out << "role:slave\r\n";
+            out << "master_host:" << replication_->masterHost << "\r\n";
+            out << "master_port:" << replication_->masterPort << "\r\n";
+            out << "master_link_status:" << (replication_->masterLinkUp ? "up" : "down") << "\r\n";
+        } else {
+            out << "role:master\r\n";
+            out << "connected_slaves:" << replication_->connectedReplicas << "\r\n";
+            out << "master_replid:" << replication_->masterReplId << "\r\n";
+            out << "master_repl_offset:" << replication_->masterReplOffset << "\r\n";
+        }
         out << "\r\n";
     }
 
@@ -186,6 +239,10 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
     };
 
     const std::string cmd = toUpperCopy(argv[0]);
+
+    if (!replayingAof && replication_->isReplica() && isWriteCommand(cmd)) {
+        return RESPEncoder::error("READONLY You can't write against a read only replica");
+    }
 
     if (cmd == "PING") {
         if (argv.size() == 1) {

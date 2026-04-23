@@ -225,6 +225,8 @@ TEST(CommandDispatcherTest, InfoReturnsMetricsAndAofState) {
     EXPECT_NE(reply.find("aof_fsync:everysec\r\n"), std::string::npos);
     EXPECT_NE(reply.find("# Replication\r\n"), std::string::npos);
     EXPECT_NE(reply.find("role:master\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("connected_slaves:0\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("master_repl_offset:0\r\n"), std::string::npos);
 }
 
 TEST(CommandDispatcherTest, InfoSupportsSectionFilter) {
@@ -236,6 +238,21 @@ TEST(CommandDispatcherTest, InfoSupportsSectionFilter) {
     EXPECT_EQ(reply.find("# Clients\r\n"), std::string::npos);
     EXPECT_EQ(dispatcher.dispatch({"INFO", "unknown"}), "-ERR unsupported INFO section\r\n");
     EXPECT_EQ(dispatcher.dispatch({"INFO", "server", "extra"}), "-ERR wrong number of arguments for 'info' command\r\n");
+}
+
+TEST(CommandDispatcherTest, InfoReplicationShowsReplicaState) {
+    ReplicationState replication;
+    replication.becomeReplica("127.0.0.1", 6379);
+
+    CommandDispatcher dispatcher(false, "appendonly.aof", AofFsyncPolicy::No, nullptr, &replication);
+    const std::string reply = dispatcher.dispatch({"INFO", "replication"});
+
+    EXPECT_NE(reply.find("# Replication\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("role:slave\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("master_host:127.0.0.1\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("master_port:6379\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("master_link_status:down\r\n"), std::string::npos);
+    EXPECT_EQ(reply.find("# Server\r\n"), std::string::npos);
 }
 
 TEST(CommandDispatcherTest, DelMultipleKeysCountsOnlyExisting) {

@@ -7,19 +7,20 @@
 当前版本已经实现：
 
 - 网络服务：单线程 `epoll` LT 事件循环，监听 `127.0.0.1`，默认端口 `6379`，支持启动参数或配置文件指定端口。
-- 配置系统：支持配置文件设置 `port`、`appendonly`、`appendfilename`、`appendfsync`。
+- 配置系统：支持配置文件设置 `port`、`appendonly`、`appendfilename`、`appendfsync`、`replicaof`。
 - 协议层：RESP2 基础解析与编码，支持半包、粘包和连续多条消息解析。
 - 命令层：命令解析、参数校验、大小写不敏感分发、Redis 风格错误响应。
 - 数据层：String 类型 KV 存储，支持基础读写、批量读写、整数自增自减。
 - 过期机制：TTL 元信息、惰性过期、事件循环中周期触发的主动过期。
 - 观测能力：`INFO` 命令输出服务、连接、命令统计、AOF 与复制基础状态。
+- 复制：支持简化版 master/replica，replica 通过 `replicaof` 连接 master，完成全量快照命令流同步和后续写命令传播。
 - 持久化：AOF 追加写入、启动 replay、同步 rewrite，并支持 `always/everysec/no` fsync 策略。
 - 测试：SDS、DICT、RESP、Config、Command、AOF 和 TCP E2E 测试均接入 CTest。
 
 当前尚未实现：
 
 - List / Hash / Set / ZSet 等复合数据类型。
-- 数据库编号、多客户端事务、复制、RDB、集群。
+- 数据库编号、多客户端事务、复制 backlog/部分重同步、RDB、集群。
 - `SET EX/PX/NX/XX` 等命令选项。
 - 真正后台执行的 `BGREWRITEAOF`。
 
@@ -56,6 +57,7 @@ sidecar        AOF / cron
 | `command` | `commandParser.hpp/.cpp`, `commandDispatcher.hpp/.cpp` | RESP 对象转 argv、命令分发、参数校验、AOF 调用 |
 | `config` | `serverConfig.hpp/.cpp` | 配置文件解析、服务启动配置 |
 | `metrics` | `serverMetrics.hpp` | 运行期指标：启动时间、连接数、累计连接数、累计命令数 |
+| `replication` | `replicationState.hpp` | 主从复制角色状态、master 地址、复制 offset 骨架 |
 | `storage` | `inMemoryDB.hpp/.cpp` | KV 数据、TTL 元信息、快照导出 |
 | `persistentence` | `aof.hpp/.cpp` | AOF 追加、回放、重写 |
 | `net` | `epollServer.hpp/.cpp` | TCP 监听、非阻塞 IO、epoll 事件循环、客户端会话 |
@@ -150,7 +152,14 @@ ClientSession
 | --- | --- | --- | --- |
 | `INFO [section]` | 0 或 1 个参数 | Bulk String | 输出运行状态；支持 `server/clients/stats/persistence/replication` 分段 |
 
-### 4.7 AOF 命令
+### 4.7 复制命令
+
+| 命令 | 参数 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `REPLCONF ...` | 可变参数 | `+OK` | replica 握手命令，当前接受并返回 OK |
+| `PSYNC ? -1` | 2 个参数 | `+FULLRESYNC ...` + 命令流 | 触发简化全量同步；master 返回当前快照命令流并将该连接标记为 replica |
+
+### 4.8 AOF 命令
 
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
@@ -194,6 +203,7 @@ ptr      = std::string*
 | `appendonly` | `yes` | 是否开启 AOF |
 | `appendfilename` | `appendonly.aof` | AOF 文件路径 |
 | `appendfsync` | `always` | 支持 `always`、`everysec`、`no` |
+| `replicaof` | 无 | 配置为 `replicaof <host> <port>` 后以 slave 角色启动 |
 
 AOF 当前触发方式：
 
@@ -247,7 +257,36 @@ REWRITEAOF / BGREWRITEAOF
 - 每个 key 先生成 `SET key value`；如果 key 有剩余 TTL，再追加 `EXPIRE key seconds`。
 - `AOF::rewriteCommands` 先写入 `appendonly.aof.tmp`，成功 `fsync` 后再原子替换目标文件。
 
-## 7. RESP 支持范围
+## 7. 复制设计
+
+当前实现的是 TinyRedis 简化复制，不实现 Redis RDB 格式、复制 backlog 和部分重同步。
+
+复制启动流程：
+
+```text
+replica 配置 replicaof <host> <port>
+-> EpollServer::initReplication
+-> replica 主动连接 master
+-> 发送 PING / REPLCONF / PSYNC ? -1
+-> master 返回 FULLRESYNC 和当前快照命令流
+-> replica 在同一个 epoll 事件循环中回放命令
+```
+
+同步规则：
+
+- 全量同步不发送 RDB，而是把 `InMemoryDB::snapshot()` 转换成 `SET` / `EXPIRE` 命令流。
+- master 在 `PSYNC` 后将连接标记为 replica，并记录到 replica fd 集合。
+- master 执行写命令成功后，会把同一条 RESP Array 命令广播给所有 replica。
+- replica 回放复制命令时不追加 AOF，也不会再次向下游传播。
+- replica 当前默认拒绝客户端写命令，返回 `READONLY` 错误。
+
+当前限制：
+
+- 仅支持 IPv4 地址形式的 master host，如 `127.0.0.1`。
+- master 断线后不会自动重连。
+- 不支持部分重同步、复制积压缓冲区、RDB 文件同步。
+
+## 8. RESP 支持范围
 
 `RESPParser` 当前支持：
 
@@ -264,7 +303,7 @@ REWRITEAOF / BGREWRITEAOF
 - Null Array 当前会被视为非法输入。
 - 协议层面支持 Simple String 元素，但客户端正常交互建议使用 RESP Array + Bulk String。
 
-## 8. 测试基线
+## 9. 测试基线
 
 CTest 当前包含：
 
@@ -286,7 +325,7 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-## 9. 后续演进方向
+## 10. 后续演进方向
 
 近期可以优先推进：
 

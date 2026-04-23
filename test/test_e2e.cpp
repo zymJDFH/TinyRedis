@@ -318,6 +318,32 @@ private:
     static inline std::string configPath_;
 };
 
+bool canUseTcpSocketForTest() {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return false;
+    }
+    ::close(fd);
+    return true;
+}
+
+bool readBulkStringValue(RespClient& client, const std::string& key, std::string& value) {
+    if (!client.sendAll(buildRequest({"GET", key}))) {
+        return false;
+    }
+
+    RESPObject out;
+    if (!client.readReply(out, 1000)) {
+        return false;
+    }
+    if (out.type != RESPType::BULK_STRING) {
+        return false;
+    }
+
+    value = out.str;
+    return true;
+}
+
 TEST_F(TinyRedisE2ETest, BasicCommandFlow) {
     RespClient client;
     ASSERT_TRUE(client.connectTo(kPort));
@@ -536,6 +562,83 @@ TEST_F(TinyRedisE2ETest, ProtocolErrorDoesNotAffectOtherConnection) {
     ASSERT_TRUE(goodClient.readReply(goodReply));
     ASSERT_EQ(goodReply.type, RESPType::SIMPLE_STRING);
     EXPECT_EQ(goodReply.str, "PONG");
+}
+
+TEST(TinyRedisReplicationE2ETest, ReplicaReceivesSnapshotAndLiveWrites) {
+    if (!canUseTcpSocketForTest()) {
+        GTEST_SKIP() << "TCP socket is not allowed in current environment";
+    }
+
+    constexpr int kMasterPort = 6392;
+    constexpr int kReplicaPort = 6393;
+    const std::string serverBinary = getExecutableDir() + "/tinyredis";
+    const std::string masterConfig =
+        "/tmp/tinyredis_repl_master_" + std::to_string(static_cast<long long>(::getpid())) + ".conf";
+    const std::string replicaConfig =
+        "/tmp/tinyredis_repl_replica_" + std::to_string(static_cast<long long>(::getpid())) + ".conf";
+
+    {
+        std::ofstream out(masterConfig);
+        out << "port " << kMasterPort << "\n";
+        out << "appendonly no\n";
+    }
+    {
+        std::ofstream out(replicaConfig);
+        out << "port " << kReplicaPort << "\n";
+        out << "appendonly no\n";
+        out << "replicaof 127.0.0.1 " << kMasterPort << "\n";
+    }
+
+    ServerProcess master;
+    ServerProcess replica;
+    ASSERT_TRUE(master.start(serverBinary, kMasterPort, masterConfig));
+
+    RespClient masterClient;
+    ASSERT_TRUE(masterClient.connectTo(kMasterPort));
+    ASSERT_TRUE(masterClient.sendAll(buildRequest({"SET", "snapshot:key", "before"})));
+    RESPObject out;
+    ASSERT_TRUE(masterClient.readReply(out));
+    ASSERT_EQ(out.type, RESPType::SIMPLE_STRING);
+
+    ASSERT_TRUE(replica.start(serverBinary, kReplicaPort, replicaConfig));
+
+    RespClient replicaClient;
+    ASSERT_TRUE(replicaClient.connectTo(kReplicaPort));
+
+    std::string value;
+    bool synced = false;
+    for (int i = 0; i < 50; ++i) {
+        if (readBulkStringValue(replicaClient, "snapshot:key", value) && value == "before") {
+            synced = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(synced);
+
+    ASSERT_TRUE(masterClient.sendAll(buildRequest({"SET", "live:key", "after"})));
+    ASSERT_TRUE(masterClient.readReply(out));
+    ASSERT_EQ(out.type, RESPType::SIMPLE_STRING);
+
+    synced = false;
+    for (int i = 0; i < 50; ++i) {
+        if (readBulkStringValue(replicaClient, "live:key", value) && value == "after") {
+            synced = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(synced);
+
+    ASSERT_TRUE(replicaClient.sendAll(buildRequest({"SET", "replica:write", "no"})));
+    ASSERT_TRUE(replicaClient.readReply(out));
+    ASSERT_EQ(out.type, RESPType::ERROR);
+    EXPECT_NE(out.str.find("READONLY"), std::string::npos);
+
+    replica.stop();
+    master.stop();
+    (void)std::filesystem::remove(masterConfig);
+    (void)std::filesystem::remove(replicaConfig);
 }
 
 TEST_F(TinyRedisE2ETest, DisconnectDuringPartialCommandDoesNotBreakServer) {

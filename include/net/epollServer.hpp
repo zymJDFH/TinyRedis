@@ -6,6 +6,7 @@
 #include "../protocol/respParser.hpp"
 
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 
 class EpollServer {
@@ -25,6 +26,15 @@ private:
         RESPParser parser;
         std::string writeBuf;
         bool closeAfterWrite = false;
+        bool replica = false;
+    };
+
+    enum class MasterSyncState {
+        Disconnected,
+        WaitingPong,
+        WaitingReplconf,
+        WaitingFullResync,
+        Streaming,
     };
 
 private:
@@ -38,14 +48,27 @@ private:
     void acceptClients();
     void handleClientRead(int fd);
     void handleClientWrite(int fd);
+    bool initReplication();
+    bool connectToMaster();
+    void handleMasterRead();
+    void handleMasterWrite();
+    void closeMaster();
+    void broadcastToReplicas(const std::vector<std::string>& argv);
+    void removeReplica(int fd);
 
 private:
     int port_;
     int listenFd_;
     int epollFd_;
+    int masterFd_;
 
     ServerConfig config_;
     ServerMetrics metrics_;
+    ReplicationState replication_;
     CommandDispatcher dispatcher_;
     std::unordered_map<int, ClientSession> clients_;
+    std::unordered_set<int> replicaFds_;
+    RESPParser masterParser_;
+    std::string masterWriteBuf_;
+    MasterSyncState masterSyncState_;
 };

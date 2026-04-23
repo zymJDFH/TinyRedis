@@ -115,12 +115,39 @@ bool loadServerConfig(const std::string& path, ServerConfig& config, std::string
         }
 
         const std::vector<std::string> tokens = splitWords(line);
+        if (tokens.empty()) {
+            continue;
+        }
+
+        const std::string key = toLowerCopy(tokens[0]);
+
+        if (key == "replicaof" || key == "slaveof") {
+            if (tokens.size() != 3) {
+                err = path + ":" + std::to_string(lineNo) + ": replicaof expects '<host> <port>'";
+                return false;
+            }
+
+            const std::string host = tokens[1];
+            const std::string portValue = tokens[2];
+            if (toLowerCopy(host) == "no" && toLowerCopy(portValue) == "one") {
+                parsed.replication.becomeMaster();
+                continue;
+            }
+
+            int masterPort = 0;
+            if (!parsePort(portValue, masterPort)) {
+                err = path + ":" + std::to_string(lineNo) + ": invalid replicaof port '" + portValue + "'";
+                return false;
+            }
+            parsed.replication.becomeReplica(host, masterPort);
+            continue;
+        }
+
         if (tokens.size() != 2) {
             err = path + ":" + std::to_string(lineNo) + ": expected '<directive> <value>'";
             return false;
         }
 
-        const std::string key = toLowerCopy(tokens[0]);
         const std::string& value = tokens[1];
 
         if (key == "port") {
