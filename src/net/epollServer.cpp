@@ -1,17 +1,15 @@
 #include "../../include/net/epollServer.hpp"
 
 #include "../../include/command/commandParser.hpp"
+#include "../../include/net/socketUtil.hpp"
 #include "../../include/protocol/respEncoder.hpp"
 
 #include <algorithm>
-#include <arpa/inet.h>
 #include <chrono>
 #include <cerrno>
 #include <cctype>
 #include <cstring>
-#include <fcntl.h>
 #include <iostream>
-#include <netinet/in.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <utility>
@@ -51,15 +49,12 @@ EpollServer::EpollServer(ServerConfig config)
     : port_(config.port),
       listenFd_(-1),
       epollFd_(-1),
-      masterFd_(-1),
       config_(std::move(config)),
       metrics_(),
       replication_(config_.replication),
       dispatcher_(config_.appendOnly, config_.appendFilename, config_.appendFsync, &metrics_, &replication_),
       replicaFds_(),
-      masterParser_(),
-      masterWriteBuf_(),
-      masterSyncState_(MasterSyncState::Disconnected) {
+      masterLink_() {
     metrics_.tcpPort.store(port_, std::memory_order_relaxed);
 }
 
@@ -78,50 +73,17 @@ EpollServer::~EpollServer() {
         ::close(epollFd_);
         epollFd_ = -1;
     }
-    if (masterFd_ >= 0) {
-        ::close(masterFd_);
-        masterFd_ = -1;
+    if (masterLink_.fd >= 0) {
+        ::close(masterLink_.fd);
+        masterLink_.fd = -1;
     }
-}
-
-bool EpollServer::setNonBlocking(int fd) {
-    const int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        return false;
-    }
-    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
 bool EpollServer::initListenSocket() {
-    listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    std::string err;
+    listenFd_ = SocketUtil::createLoopbackListenSocket(port_, kBacklog, err);
     if (listenFd_ < 0) {
-        std::cerr << "socket failed: " << std::strerror(errno) << "\n";
-        return false;
-    }
-
-    int opt = 1;
-    if (::setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        std::cerr << "setsockopt failed: " << std::strerror(errno) << "\n";
-        return false;
-    }
-
-    if (!setNonBlocking(listenFd_)) {
-        std::cerr << "setNonBlocking listen fd failed: " << std::strerror(errno) << "\n";
-        return false;
-    }
-
-    sockaddr_in addr {};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(port_));
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    if (::bind(listenFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "bind 127.0.0.1:" << port_ << " failed: " << std::strerror(errno) << "\n";
-        return false;
-    }
-
-    if (::listen(listenFd_, kBacklog) < 0) {
-        std::cerr << "listen failed: " << std::strerror(errno) << "\n";
+        std::cerr << "initListenSocket failed: " << err << "\n";
         return false;
     }
 
@@ -203,7 +165,8 @@ void EpollServer::acceptClients() {
             break;
         }
 
-        if (!setNonBlocking(fd)) {
+        std::string err;
+        if (!SocketUtil::setNonBlocking(fd, err)) {
             ::close(fd);
             continue;
         }
@@ -348,44 +311,24 @@ bool EpollServer::initReplication() {
 }
 
 bool EpollServer::connectToMaster() {
-    masterFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (masterFd_ < 0) {
-        std::cerr << "replication socket failed: " << std::strerror(errno) << "\n";
-        return false;
-    }
-
-    if (!setNonBlocking(masterFd_)) {
-        std::cerr << "replication setNonBlocking failed: " << std::strerror(errno) << "\n";
-        closeMaster();
-        return false;
-    }
-
-    sockaddr_in addr {};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(replication_.masterPort));
-    if (::inet_pton(AF_INET, replication_.masterHost.c_str(), &addr.sin_addr) != 1) {
-        std::cerr << "replication master host must be an IPv4 address: " << replication_.masterHost << "\n";
-        closeMaster();
-        return false;
-    }
-
-    const int rc = ::connect(masterFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-    if (rc != 0 && errno != EINPROGRESS) {
+    std::string err;
+    masterLink_.fd = SocketUtil::createReplicaConnection(replication_.masterHost, replication_.masterPort, err);
+    if (masterLink_.fd < 0) {
         std::cerr << "connect master " << replication_.masterHost << ":" << replication_.masterPort
-                  << " failed: " << std::strerror(errno) << "\n";
+                  << " failed: " << err << "\n";
         closeMaster();
         return false;
     }
 
-    masterWriteBuf_ += RESPEncoder::array({"PING"});
-    masterWriteBuf_ += RESPEncoder::array({"REPLCONF", "listening-port", std::to_string(port_)});
-    masterWriteBuf_ += RESPEncoder::array({"PSYNC", "?", "-1"});
-    masterSyncState_ = MasterSyncState::WaitingPong;
+    masterLink_.writeBuf += RESPEncoder::array({"PING"});
+    masterLink_.writeBuf += RESPEncoder::array({"REPLCONF", "listening-port", std::to_string(port_)});
+    masterLink_.writeBuf += RESPEncoder::array({"PSYNC", "?", "-1"});
+    masterLink_.state = MasterSyncState::WaitingPong;
 
     epoll_event ev {};
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-    ev.data.fd = masterFd_;
-    if (::epoll_ctl(epollFd_, EPOLL_CTL_ADD, masterFd_, &ev) < 0) {
+    ev.data.fd = masterLink_.fd;
+    if (::epoll_ctl(epollFd_, EPOLL_CTL_ADD, masterLink_.fd, &ev) < 0) {
         std::cerr << "epoll_ctl add master fd failed: " << std::strerror(errno) << "\n";
         closeMaster();
         return false;
@@ -395,8 +338,8 @@ bool EpollServer::connectToMaster() {
 }
 
 void EpollServer::handleMasterWrite() {
-    while (!masterWriteBuf_.empty()) {
-        const ssize_t n = ::send(masterFd_, masterWriteBuf_.data(), masterWriteBuf_.size(), 0);
+    while (!masterLink_.writeBuf.empty()) {
+        const ssize_t n = ::send(masterLink_.fd, masterLink_.writeBuf.data(), masterLink_.writeBuf.size(), 0);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
@@ -411,14 +354,14 @@ void EpollServer::handleMasterWrite() {
             closeMaster();
             return;
         }
-        masterWriteBuf_.erase(0, static_cast<size_t>(n));
+        masterLink_.writeBuf.erase(0, static_cast<size_t>(n));
     }
 
-    if (masterWriteBuf_.empty()) {
+    if (masterLink_.writeBuf.empty()) {
         epoll_event ev {};
         ev.events = EPOLLIN | EPOLLRDHUP;
-        ev.data.fd = masterFd_;
-        if (::epoll_ctl(epollFd_, EPOLL_CTL_MOD, masterFd_, &ev) < 0) {
+        ev.data.fd = masterLink_.fd;
+        if (::epoll_ctl(epollFd_, EPOLL_CTL_MOD, masterLink_.fd, &ev) < 0) {
             closeMaster();
         }
     }
@@ -428,7 +371,7 @@ void EpollServer::handleMasterRead() {
     char buf[kReadBufSize];
 
     for (;;) {
-        const ssize_t n = ::recv(masterFd_, buf, sizeof(buf), 0);
+        const ssize_t n = ::recv(masterLink_.fd, buf, sizeof(buf), 0);
         if (n == 0) {
             closeMaster();
             return;
@@ -444,13 +387,13 @@ void EpollServer::handleMasterRead() {
             return;
         }
 
-        masterParser_.feed(buf, static_cast<size_t>(n));
+        masterLink_.parser.feed(buf, static_cast<size_t>(n));
 
         for (;;) {
             RESPObject obj;
             bool ok = false;
             try {
-                ok = masterParser_.parse(obj);
+                ok = masterLink_.parser.parse(obj);
             } catch (const std::exception& ex) {
                 std::cerr << "replication protocol error: " << ex.what() << "\n";
                 closeMaster();
@@ -460,31 +403,31 @@ void EpollServer::handleMasterRead() {
                 break;
             }
 
-            if (masterSyncState_ == MasterSyncState::WaitingPong) {
+            if (masterLink_.state == MasterSyncState::WaitingPong) {
                 if (obj.type != RESPType::SIMPLE_STRING || obj.str != "PONG") {
                     closeMaster();
                     return;
                 }
-                masterSyncState_ = MasterSyncState::WaitingReplconf;
+                masterLink_.state = MasterSyncState::WaitingReplconf;
                 continue;
             }
 
-            if (masterSyncState_ == MasterSyncState::WaitingReplconf) {
+            if (masterLink_.state == MasterSyncState::WaitingReplconf) {
                 if (obj.type != RESPType::SIMPLE_STRING || obj.str != "OK") {
                     closeMaster();
                     return;
                 }
-                masterSyncState_ = MasterSyncState::WaitingFullResync;
+                masterLink_.state = MasterSyncState::WaitingFullResync;
                 continue;
             }
 
-            if (masterSyncState_ == MasterSyncState::WaitingFullResync) {
+            if (masterLink_.state == MasterSyncState::WaitingFullResync) {
                 if (obj.type != RESPType::SIMPLE_STRING || obj.str.rfind("FULLRESYNC ", 0) != 0) {
                     closeMaster();
                     return;
                 }
                 replication_.masterLinkUp = true;
-                masterSyncState_ = MasterSyncState::Streaming;
+                masterLink_.state = MasterSyncState::Streaming;
                 continue;
             }
 
@@ -505,13 +448,15 @@ void EpollServer::handleMasterRead() {
 }
 
 void EpollServer::closeMaster() {
-    if (masterFd_ >= 0) {
-        ::epoll_ctl(epollFd_, EPOLL_CTL_DEL, masterFd_, nullptr);
-        ::close(masterFd_);
-        masterFd_ = -1;
+    if (masterLink_.fd >= 0) {
+        ::epoll_ctl(epollFd_, EPOLL_CTL_DEL, masterLink_.fd, nullptr);
+        ::close(masterLink_.fd);
+        masterLink_.fd = -1;
     }
     replication_.masterLinkUp = false;
-    masterSyncState_ = MasterSyncState::Disconnected;
+    masterLink_.parser = RESPParser();
+    masterLink_.writeBuf.clear();
+    masterLink_.state = MasterSyncState::Disconnected;
 }
 
 void EpollServer::removeReplica(int fd) {
@@ -562,7 +507,7 @@ void EpollServer::run() {
             const int fd = events[i].data.fd;
             const uint32_t ev = events[i].events;
 
-            if (fd == masterFd_) {
+            if (fd == masterLink_.fd) {
                 if ((ev & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0) {
                     closeMaster();
                     continue;
@@ -570,7 +515,7 @@ void EpollServer::run() {
                 if ((ev & EPOLLIN) != 0) {
                     handleMasterRead();
                 }
-                if (masterFd_ >= 0 && (ev & EPOLLOUT) != 0) {
+                if (masterLink_.fd >= 0 && (ev & EPOLLOUT) != 0) {
                     handleMasterWrite();
                 }
                 continue;

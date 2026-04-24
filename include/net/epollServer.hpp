@@ -3,7 +3,8 @@
 #include "../config/serverConfig.hpp"
 #include "../command/commandDispatcher.hpp"
 #include "../metrics/serverMetrics.hpp"
-#include "../protocol/respParser.hpp"
+#include "clientSession.hpp"
+#include "masterReplicationLink.hpp"
 
 #include <string>
 #include <unordered_set>
@@ -22,26 +23,8 @@ public:
     void run();
 
 private:
-    struct ClientSession {
-        RESPParser parser;
-        std::string writeBuf;
-        bool closeAfterWrite = false;
-        bool replica = false;
-    };
-
-    enum class MasterSyncState {
-        Disconnected,
-        WaitingPong,
-        WaitingReplconf,
-        WaitingFullResync,
-        Streaming,
-    };
-
-private:
     bool initListenSocket();
     bool initEpoll();
-
-    static bool setNonBlocking(int fd);
     bool updateClientEvents(int fd, bool wantWrite);
     void closeClient(int fd);
 
@@ -60,7 +43,6 @@ private:
     int port_;
     int listenFd_;
     int epollFd_;
-    int masterFd_;
 
     ServerConfig config_;
     ServerMetrics metrics_;
@@ -68,7 +50,5 @@ private:
     CommandDispatcher dispatcher_;
     std::unordered_map<int, ClientSession> clients_;
     std::unordered_set<int> replicaFds_;
-    RESPParser masterParser_;
-    std::string masterWriteBuf_;
-    MasterSyncState masterSyncState_;
+    MasterReplicationLink masterLink_;
 };

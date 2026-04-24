@@ -19,6 +19,7 @@ add_executable(tinyredis
     src/command/commandParser.cpp
     src/command/commandDispatcher.cpp
     src/config/serverConfig.cpp
+    src/net/socketUtil.cpp
     src/persistentence/aof.cpp
     src/net/epollServer.cpp
 )

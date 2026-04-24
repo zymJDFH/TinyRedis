@@ -60,7 +60,7 @@ sidecar        AOF / cron
 | `replication` | `replicationState.hpp` | 主从复制角色状态、master 地址、复制 offset 骨架 |
 | `storage` | `inMemoryDB.hpp/.cpp` | KV 数据、TTL 元信息、快照导出 |
 | `persistentence` | `aof.hpp/.cpp` | AOF 追加、回放、重写 |
-| `net` | `epollServer.hpp/.cpp` | TCP 监听、非阻塞 IO、epoll 事件循环、客户端会话 |
+| `net` | `epollServer.hpp/.cpp`, `socketUtil.hpp/.cpp`, `clientSession.hpp`, `masterReplicationLink.hpp` | TCP 监听、socket 初始化、epoll 事件循环、客户端会话与主从复制链路状态 |
 | `test` | `test_*.cpp` | 单元测试和端到端测试 |
 
 ## 3. 请求处理链路
