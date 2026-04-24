@@ -14,7 +14,7 @@
 - 过期机制：TTL 元信息、惰性过期、事件循环中周期触发的主动过期。
 - 观测能力：`INFO` 命令输出服务、连接、命令统计、AOF 与复制基础状态。
 - 复制：支持简化版 master/replica，replica 通过 `replicaof` 连接 master，完成全量快照命令流同步和后续写命令传播。
-- 持久化：AOF 追加写入、启动 replay、同步 rewrite，并支持 `always/everysec/no` fsync 策略。
+- 持久化：AOF 追加写入、启动 replay、同步 rewrite、后台 `BGREWRITEAOF`，并支持 `always/everysec/no` fsync 策略。
 - 测试：SDS、DICT、RESP、Config、Command、AOF 和 TCP E2E 测试均接入 CTest。
 
 当前尚未实现：
@@ -22,7 +22,7 @@
 - List / Hash / Set / ZSet 等复合数据类型。
 - 数据库编号、多客户端事务、复制 backlog/部分重同步、RDB、集群。
 - `SET EX/PX/NX/XX` 等命令选项。
-- 真正后台执行的 `BGREWRITEAOF`。
+- replication backlog、部分重同步和 RDB 级快照同步。
 
 ## 2. 模块划分
 
@@ -164,7 +164,7 @@ ClientSession
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `REWRITEAOF` | 无 | `+OK` / Error | 基于当前内存快照同步重写 AOF |
-| `BGREWRITEAOF` | 无 | `+OK` / Error | 当前实现与 `REWRITEAOF` 相同，仍是同步执行 |
+| `BGREWRITEAOF` | 无 | `+OK` / Error | 后台生成临时 AOF；主线程继续处理写命令，并在 cron 中合并 rewrite buffer 后原子切换 |
 
 ## 5. 数据模型与过期策略
 
@@ -209,7 +209,7 @@ AOF 当前触发方式：
 
 - 自动追加：网络服务执行写命令成功后，会自动追加到 AOF。
 - 自动恢复：服务启动时会自动调用 `loadAof` 回放已有 AOF。
-- 手动重写：`REWRITEAOF` / `BGREWRITEAOF` 需要客户端显式发送命令触发；当前两者都是同步重写。
+- 手动重写：`REWRITEAOF` 为同步重写；`BGREWRITEAOF` 启动后台任务，由事件循环 `cron` 负责收尾切换。
 
 运行时写入：
 
@@ -244,7 +244,7 @@ EpollServer::init
 同步重写：
 
 ```text
-REWRITEAOF / BGREWRITEAOF
+REWRITEAOF
 -> InMemoryDB::snapshot
 -> 生成 SET / EXPIRE 恢复命令
 -> AOF::rewriteCommands
@@ -252,10 +252,31 @@ REWRITEAOF / BGREWRITEAOF
 
 重写规则：
 
-- `REWRITEAOF` 与 `BGREWRITEAOF` 当前都走同步重写路径。
+- `REWRITEAOF` 走同步重写路径。
 - 重写基于 `InMemoryDB::snapshot` 生成恢复命令，只保留当前仍有效的 key。
 - 每个 key 先生成 `SET key value`；如果 key 有剩余 TTL，再追加 `EXPIRE key seconds`。
 - `AOF::rewriteCommands` 先写入 `appendonly.aof.tmp`，成功 `fsync` 后再原子替换目标文件。
+
+后台重写：
+
+```text
+BGREWRITEAOF
+-> InMemoryDB::snapshot
+-> 生成 SET / EXPIRE 恢复命令
+-> AOF::startBackgroundRewrite
+-> 后台线程写 appendonly.aof.tmp.bg
+-> 主线程继续处理写命令，并将命令追加到 rewrite buffer
+-> CommandDispatcher::cron
+-> AOF::pollBackgroundRewrite
+-> 合并 rewrite buffer
+-> rename(tmp.bg -> appendonly.aof)
+```
+
+后台重写规则：
+
+- `BGREWRITEAOF` 返回后不会阻塞主线程事件循环。
+- rewrite 期间写命令仍会正常执行，并额外进入 rewrite buffer，避免新写入在最终切换时丢失。
+- `INFO persistence` 暴露 `aof_rewrite_in_progress` 和 `aof_last_bgrewrite_status`。
 
 ## 7. 复制设计
 
@@ -329,6 +350,6 @@ ctest --test-dir build --output-on-failure
 
 近期可以优先推进：
 
-- 将 `BGREWRITEAOF` 改为真正后台重写。
 - 补齐 String 常用命令选项，如 `SET EX/PX/NX/XX`。
 - 扩展 List / Hash / Set / ZSet 数据类型。
+- 增加 replication backlog 和部分重同步。

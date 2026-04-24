@@ -223,6 +223,8 @@ TEST(CommandDispatcherTest, InfoReturnsMetricsAndAofState) {
     EXPECT_NE(reply.find("aof_enabled:1\r\n"), std::string::npos);
     EXPECT_NE(reply.find("aof_filename:/tmp/tinyredis-info-test.aof\r\n"), std::string::npos);
     EXPECT_NE(reply.find("aof_fsync:everysec\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("aof_rewrite_in_progress:0\r\n"), std::string::npos);
+    EXPECT_NE(reply.find("aof_last_bgrewrite_status:ok\r\n"), std::string::npos);
     EXPECT_NE(reply.find("# Replication\r\n"), std::string::npos);
     EXPECT_NE(reply.find("role:master\r\n"), std::string::npos);
     EXPECT_NE(reply.find("connected_slaves:0\r\n"), std::string::npos);

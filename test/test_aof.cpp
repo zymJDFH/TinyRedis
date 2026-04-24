@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <unistd.h>
 
 #include "command/commandDispatcher.hpp"
@@ -10,11 +12,30 @@ namespace {
 std::string tempAofPath(const std::string& suffix) {
     return "/tmp/tinyredis_test_aof_" + std::to_string(static_cast<long long>(::getpid())) + "_" + suffix + ".aof";
 }
+
+void removeAofArtifacts(const std::string& path) {
+    (void)std::filesystem::remove(path);
+    (void)std::filesystem::remove(path + ".tmp");
+    (void)std::filesystem::remove(path + ".tmp.bg");
+}
+
+void waitForBackgroundRewrite(CommandDispatcher& dispatcher) {
+    for (int i = 0; i < 200; ++i) {
+        const std::string info = dispatcher.dispatch({"INFO", "persistence"});
+        if (info.find("aof_rewrite_in_progress:0\r\n") != std::string::npos) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        dispatcher.cron();
+    }
+
+    FAIL() << "background rewrite did not finish in time";
+}
 } // namespace
 
 TEST(AOFTest, MissingFileLoadSucceeds) {
     const std::string path = tempAofPath("missing");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     CommandDispatcher dispatcher(true, path);
     EXPECT_TRUE(dispatcher.loadAof());
@@ -22,7 +43,7 @@ TEST(AOFTest, MissingFileLoadSucceeds) {
 
 TEST(AOFTest, AppendAndReplayRestoresState) {
     const std::string path = tempAofPath("restore");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path);
@@ -40,12 +61,12 @@ TEST(AOFTest, AppendAndReplayRestoresState) {
                   "*3\r\n$1\r\nx\r\n$1\r\ny\r\n$-1\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 }
 
 TEST(AOFTest, EverySecPolicyAppendsAndReplays) {
     const std::string path = tempAofPath("everysec");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path, AofFsyncPolicy::EverySec);
@@ -59,12 +80,12 @@ TEST(AOFTest, EverySecPolicyAppendsAndReplays) {
         EXPECT_EQ(reader.dispatch({"GET", "k"}), "$1\r\n1\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 }
 
 TEST(AOFTest, NoFsyncPolicyStillAppendsAndReplays) {
     const std::string path = tempAofPath("nofsync");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path, AofFsyncPolicy::No);
@@ -77,12 +98,12 @@ TEST(AOFTest, NoFsyncPolicyStillAppendsAndReplays) {
         EXPECT_EQ(reader.dispatch({"GET", "k"}), "$1\r\nv\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 }
 
 TEST(AOFTest, FailedWriteCommandIsNotAppended) {
     const std::string path = tempAofPath("failed_cmd");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path);
@@ -96,12 +117,12 @@ TEST(AOFTest, FailedWriteCommandIsNotAppended) {
         EXPECT_EQ(reader.dispatch({"GET", "n"}), "$3\r\nabc\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 }
 
 TEST(AOFTest, RewriteKeepsFinalState) {
     const std::string path = tempAofPath("rewrite_final");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path);
@@ -109,6 +130,7 @@ TEST(AOFTest, RewriteKeepsFinalState) {
         EXPECT_EQ(writer.dispatch({"SET", "k", "2"}), "+OK\r\n");
         EXPECT_EQ(writer.dispatch({"INCR", "k"}), ":3\r\n");
         EXPECT_EQ(writer.dispatch({"BGREWRITEAOF"}), "+OK\r\n");
+        waitForBackgroundRewrite(writer);
     }
 
     {
@@ -117,12 +139,12 @@ TEST(AOFTest, RewriteKeepsFinalState) {
         EXPECT_EQ(reader.dispatch({"GET", "k"}), "$1\r\n3\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 }
 
 TEST(AOFTest, RewriteDropsDeletedKeys) {
     const std::string path = tempAofPath("rewrite_deleted");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path);
@@ -139,18 +161,19 @@ TEST(AOFTest, RewriteDropsDeletedKeys) {
         EXPECT_EQ(reader.dispatch({"GET", "alive"}), "$1\r\n2\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 }
 
 TEST(AOFTest, RewritePreservesTtl) {
     const std::string path = tempAofPath("rewrite_ttl");
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
 
     {
         CommandDispatcher writer(true, path);
         EXPECT_EQ(writer.dispatch({"SET", "ttl", "v"}), "+OK\r\n");
         EXPECT_EQ(writer.dispatch({"EXPIRE", "ttl", "10"}), ":1\r\n");
         EXPECT_EQ(writer.dispatch({"BGREWRITEAOF"}), "+OK\r\n");
+        waitForBackgroundRewrite(writer);
     }
 
     {
@@ -164,5 +187,34 @@ TEST(AOFTest, RewritePreservesTtl) {
         EXPECT_NE(ttlReply, ":-2\r\n");
     }
 
-    (void)std::filesystem::remove(path);
+    removeAofArtifacts(path);
+}
+
+TEST(AOFTest, BackgroundRewriteCapturesLiveWrites) {
+    const std::string path = tempAofPath("rewrite_live_writes");
+    removeAofArtifacts(path);
+
+    {
+        CommandDispatcher writer(true, path);
+        EXPECT_EQ(writer.dispatch({"SET", "k", "1"}), "+OK\r\n");
+        EXPECT_EQ(writer.dispatch({"BGREWRITEAOF"}), "+OK\r\n");
+
+        const std::string infoWhileRunning = writer.dispatch({"INFO", "persistence"});
+        EXPECT_NE(infoWhileRunning.find("aof_rewrite_in_progress:1\r\n"), std::string::npos);
+        EXPECT_NE(infoWhileRunning.find("aof_last_bgrewrite_status:in_progress\r\n"), std::string::npos);
+
+        EXPECT_EQ(writer.dispatch({"INCRBY", "k", "4"}), ":5\r\n");
+        EXPECT_EQ(writer.dispatch({"SET", "tail", "ok"}), "+OK\r\n");
+
+        waitForBackgroundRewrite(writer);
+    }
+
+    {
+        CommandDispatcher reader(true, path);
+        ASSERT_TRUE(reader.loadAof()) << reader.lastError();
+        EXPECT_EQ(reader.dispatch({"GET", "k"}), "$1\r\n5\r\n");
+        EXPECT_EQ(reader.dispatch({"GET", "tail"}), "$2\r\nok\r\n");
+    }
+
+    removeAofArtifacts(path);
 }

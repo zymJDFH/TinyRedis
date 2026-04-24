@@ -97,6 +97,11 @@ bool CommandDispatcher::rewriteAof(std::string& err) {
     return aof_.rewriteCommands(snapshotCommands(), err);
 }
 
+bool CommandDispatcher::backgroundRewriteAof(std::string& err) {
+    err.clear();
+    return aof_.startBackgroundRewrite(snapshotCommands(), err);
+}
+
 std::vector<std::vector<std::string>> CommandDispatcher::snapshotCommands() {
     std::vector<DBSnapshotEntry> entries = db_.snapshot();
     std::vector<std::vector<std::string>> commands;
@@ -160,6 +165,9 @@ void CommandDispatcher::cron() {
     if (!aof_.flushIfNeeded(err)) {
         lastError_ = "AOF fsync failed: " + err;
     }
+    if (!aof_.pollBackgroundRewrite(err)) {
+        lastError_ = "AOF background rewrite failed: " + err;
+    }
 }
 
 std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv) {
@@ -199,6 +207,8 @@ std::string CommandDispatcher::buildInfoReply(const std::string& section) const 
         out << "aof_enabled:" << (aof_.enabled() ? 1 : 0) << "\r\n";
         out << "aof_filename:" << aof_.path() << "\r\n";
         out << "aof_fsync:" << aofFsyncPolicyName(aof_.fsyncPolicy()) << "\r\n";
+        out << "aof_rewrite_in_progress:" << (aof_.backgroundRewriteInProgress() ? 1 : 0) << "\r\n";
+        out << "aof_last_bgrewrite_status:" << aof_.lastBackgroundRewriteStatus() << "\r\n";
         out << "\r\n";
     }
 
@@ -446,13 +456,24 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
         return buildInfoReply(section);
     }
 
-    if (cmd == "REWRITEAOF" || cmd == "BGREWRITEAOF") {
+    if (cmd == "REWRITEAOF") {
         if (argv.size() != 1) {
-            return wrongArity(cmd == "REWRITEAOF" ? "rewriteaof" : "bgrewriteaof");
+            return wrongArity("rewriteaof");
         }
         std::string err;
         if (!rewriteAof(err)) {
             return RESPEncoder::error("ERR AOF rewrite failed: " + err);
+        }
+        return RESPEncoder::simpleString("OK");
+    }
+
+    if (cmd == "BGREWRITEAOF") {
+        if (argv.size() != 1) {
+            return wrongArity("bgrewriteaof");
+        }
+        std::string err;
+        if (!backgroundRewriteAof(err)) {
+            return RESPEncoder::error("ERR AOF background rewrite failed: " + err);
         }
         return RESPEncoder::simpleString("OK");
     }

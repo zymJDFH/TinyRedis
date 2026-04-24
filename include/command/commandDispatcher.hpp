@@ -18,6 +18,7 @@ public:
     std::string dispatch(const std::vector<std::string>& argv);
     bool loadAof();
     bool rewriteAof(std::string& err);
+    bool backgroundRewriteAof(std::string& err);
     const std::string& lastError() const;
     bool applyReplicationCommand(const std::vector<std::string>& argv, std::string& err);
     std::string fullResyncPayload();

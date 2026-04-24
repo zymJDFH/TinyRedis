@@ -1,6 +1,6 @@
 # TinyRedis
 ## 项目简介
-TinyRedis 是一个基于 C++17 实现的 Redis 学习型内核项目，目标是在贴近真实工程的前提下逐步复现 Redis 的核心能力。  
+TinyRedis 是一个基于 C++17 实现的 Redis 兼容内存数据库内核项目，目标是在贴近真实工程的前提下逐步复现 Redis 的核心能力。  
 当前版本已打通 `epoll` 单线程事件循环、RESP2 编解码、命令解析与分发链路，并支持 String 基础命令、TTL 命令子集与 AOF 持久化。  
 项目重点关注模块化设计与可测试性（`net/protocol/command/core/object/persistentence` 分层），后续将继续推进配置化、稳定性增强与更多数据类型。
 
@@ -18,7 +18,7 @@ TinyRedis 当前采用单线程 `epoll` 事件循环模型，主请求链路按 
 
 - 请求链路：`Client -> EpollServer -> RESPParser -> CommandParser -> CommandDispatcher -> InMemoryDB`
 - 响应链路：`CommandDispatcher -> RESPEncoder -> ClientSession::writeBuf -> handleClientWrite -> Client`
-- 持久化旁路：AOF 负责写命令追加、启动恢复、同步重写与可配置 fsync 策略
+- 持久化旁路：AOF 负责写命令追加、启动恢复、同步/后台重写与可配置 fsync 策略
 - cron 任务：当前不是独立线程，而是在 `EpollServer::run` 事件循环中周期触发 `CommandDispatcher::cron`
 
 ### 架构图
@@ -31,7 +31,7 @@ TinyRedis 当前采用单线程 `epoll` 事件循环模型，主请求链路按 
 - 配置：支持配置文件和启动参数设置端口、AOF 开关、AOF 文件路径、`appendfsync` 策略和 `replicaof` 复制角色
 - 观测：支持 `INFO` 输出 server、clients、stats、persistence、replication 基础指标
 - 复制：支持简化版 master/replica，全量快照命令流同步和后续写命令传播
-- 持久化：AOF（写命令追加 + 启动重放恢复 + 同步 rewrite + `always/everysec/no` fsync 策略）
+- 持久化：AOF（写命令追加 + 启动重放恢复 + `REWRITEAOF/BGREWRITEAOF` + `always/everysec/no` fsync 策略）
 - 测试基线：`test_sds`、`test_dict`、`test_resp`、`test_config`、`test_command`、`test_aof`、`test_e2e`（已接入 CTest）
 
 
