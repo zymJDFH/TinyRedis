@@ -10,6 +10,10 @@ RedisObject* asObject(void* p) {
     return static_cast<RedisObject*>(p);
 }
 
+std::string* asStringValue(void* p) {
+    return static_cast<std::string*>(p);
+}
+
 int64_t* asExpireAt(void* p) {
     return static_cast<int64_t*>(p);
 }
@@ -28,6 +32,11 @@ bool addWouldOverflow(long long base, long long delta) {
 int64_t InMemoryDB::nowMs() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+RedisObject* InMemoryDB::getObject(const std::string& key) {
+    expireIfNeeded(key);
+    return asObject(kv_.get(SDS(key)));
 }
 
 void InMemoryDB::setExpireAtMs(const std::string& key, int64_t expireAtMs) {
@@ -109,19 +118,21 @@ void InMemoryDB::set(const std::string& key, const std::string& value) {
 }
 
 bool InMemoryDB::get(const std::string& key, std::string& value) {
-    expireIfNeeded(key);
+    return getStringValue(key, value) == DBStatus::Ok;
+}
 
-    void* raw = kv_.get(SDS(key));
-    if (raw == nullptr) {
-        return false;
+DBStatus InMemoryDB::getStringValue(const std::string& key, std::string& value) {
+    RedisObject* obj = getObject(key);
+    if (obj == nullptr) {
+        return DBStatus::NotFound;
     }
 
-    const std::string* s = getStringObjectValue(asObject(raw));
+    const std::string* s = getStringObjectValue(obj);
     if (s == nullptr) {
-        return false;
+        return DBStatus::WrongType;
     }
     value = *s;
-    return true;
+    return DBStatus::Ok;
 }
 
 int InMemoryDB::del(const std::string& key) {
@@ -157,16 +168,15 @@ bool InMemoryDB::incrBy(const std::string& key,
                         long long delta,
                         long long& newValue,
                         std::string& err) {
-    expireIfNeeded(key);
-
     err.clear();
     long long value = 0;
 
-    void* raw = kv_.get(SDS(key));
-    if (raw != nullptr) {
-        const std::string* s = getStringObjectValue(asObject(raw));
+    RedisObject* obj = getObject(key);
+    void* raw = obj;
+    if (obj != nullptr) {
+        const std::string* s = getStringObjectValue(obj);
         if (s == nullptr) {
-            err = "value is not an integer or out of range";
+            err = "WRONGTYPE Operation against a key holding the wrong kind of value";
             return false;
         }
         try {
@@ -197,6 +207,118 @@ bool InMemoryDB::incrBy(const std::string& key,
     }
 
     return true;
+}
+
+DBStatus InMemoryDB::hset(const std::string& key,
+                          const std::vector<std::pair<std::string, std::string>>& fieldValues,
+                          int& addedCount) {
+    addedCount = 0;
+    RedisObject* obj = getObject(key);
+
+    if (obj == nullptr) {
+        obj = createHashObject();
+        kv_.set(SDS(key), obj);
+    } else if (obj->type != RedisObjectType::HASH) {
+        return DBStatus::WrongType;
+    }
+
+    DICT* hash = getHashObjectValue(obj);
+    for (const auto& [field, value] : fieldValues) {
+        SDS sField(field);
+        void* old = hash->get(sField);
+        hash->set(SDS(field), new std::string(value));
+        if (old == nullptr) {
+            ++addedCount;
+        } else {
+            delete asStringValue(old);
+        }
+    }
+
+    return DBStatus::Ok;
+}
+
+DBStatus InMemoryDB::hget(const std::string& key, const std::string& field, std::string& value) {
+    RedisObject* obj = getObject(key);
+    if (obj == nullptr) {
+        return DBStatus::NotFound;
+    }
+    if (obj->type != RedisObjectType::HASH) {
+        return DBStatus::WrongType;
+    }
+
+    DICT* hash = getHashObjectValue(obj);
+    void* raw = hash->get(SDS(field));
+    if (raw == nullptr) {
+        return DBStatus::NotFound;
+    }
+
+    value = *asStringValue(raw);
+    return DBStatus::Ok;
+}
+
+DBStatus InMemoryDB::hdel(const std::string& key, const std::vector<std::string>& fields, int& removedCount) {
+    removedCount = 0;
+    RedisObject* obj = getObject(key);
+    if (obj == nullptr) {
+        return DBStatus::NotFound;
+    }
+    if (obj->type != RedisObjectType::HASH) {
+        return DBStatus::WrongType;
+    }
+
+    DICT* hash = getHashObjectValue(obj);
+    for (const std::string& field : fields) {
+        SDS sField(field);
+        void* raw = hash->get(sField);
+        if (raw == nullptr) {
+            continue;
+        }
+        if (hash->erase(sField)) {
+            delete asStringValue(raw);
+            ++removedCount;
+        }
+    }
+
+    if (hash->size() == 0) {
+        const SDS sKey(key);
+        void* raw = kv_.get(sKey);
+        if (raw != nullptr && kv_.erase(sKey)) {
+            freeRedisObject(asObject(raw));
+            (void)eraseExpire(key);
+        }
+    }
+
+    return DBStatus::Ok;
+}
+
+DBStatus InMemoryDB::hexists(const std::string& key, const std::string& field, bool& exists) {
+    exists = false;
+    RedisObject* obj = getObject(key);
+    if (obj == nullptr) {
+        return DBStatus::NotFound;
+    }
+    if (obj->type != RedisObjectType::HASH) {
+        return DBStatus::WrongType;
+    }
+
+    DICT* hash = getHashObjectValue(obj);
+    exists = hash->get(SDS(field)) != nullptr;
+    return exists ? DBStatus::Ok : DBStatus::NotFound;
+}
+
+DBStatus InMemoryDB::hlen(const std::string& key, size_t& len) {
+    len = 0;
+    RedisObject* obj = getObject(key);
+    if (obj == nullptr) {
+        return DBStatus::NotFound;
+    }
+    if (obj->type != RedisObjectType::HASH) {
+        return DBStatus::WrongType;
+    }
+
+    DICT* hash = getHashObjectValue(obj);
+    len = hash->size();
+    return DBStatus::Ok;
 }
 
 //给键设置秒级的过期时间
@@ -313,11 +435,6 @@ std::vector<DBSnapshotEntry> InMemoryDB::snapshot() {
 
     kv_.forEach([&](const SDS& key, void* value) {
         const std::string keyStr = key.c_str();
-        const std::string* strValue = getStringObjectValue(asObject(value));
-        if (strValue == nullptr) {
-            return;
-        }
-
         int64_t expireAtMs = 0;
         long long ttlMs = -1;
         if (getExpireAtMs(keyStr, expireAtMs)) {
@@ -327,7 +444,28 @@ std::vector<DBSnapshotEntry> InMemoryDB::snapshot() {
             }
         }
 
-        entries.push_back(DBSnapshotEntry {keyStr, *strValue, ttlMs});
+        RedisObject* obj = asObject(value);
+        DBSnapshotEntry entry {};
+        entry.type = obj->type;
+        entry.key = keyStr;
+        entry.ttlMs = ttlMs;
+
+        if (const std::string* strValue = getStringObjectValue(obj); strValue != nullptr) {
+            entry.stringValue = *strValue;
+            entries.push_back(std::move(entry));
+            return;
+        }
+
+        const DICT* hash = getHashObjectValue(obj);
+        if (hash == nullptr) {
+            return;
+        }
+
+        entry.hashEntries.reserve(hash->size());
+        hash->forEach([&](const SDS& field, void* fieldValue) {
+            entry.hashEntries.push_back(DBHashFieldEntry {field.c_str(), *asStringValue(fieldValue)});
+        });
+        entries.push_back(std::move(entry));
     });
 
     return entries;

@@ -234,7 +234,7 @@ bool DICT::erase(const SDS& key) {
     return false;
 }
 
-size_t DICT::size() {
+size_t DICT::size() const {
     // 渐进 rehash 阶段元素会分布在两张表
     return dict_.ht[0].used + dict_.ht[1].used;
 }

@@ -10,7 +10,7 @@
 - 配置系统：支持配置文件设置 `port`、`appendonly`、`appendfilename`、`appendfsync`、`replicaof`。
 - 协议层：RESP2 基础解析与编码，支持半包、粘包和连续多条消息解析。
 - 命令层：命令解析、参数校验、大小写不敏感分发、Redis 风格错误响应。
-- 数据层：String 类型 KV 存储，支持基础读写、批量读写、整数自增自减。
+- 数据层：支持 String 与基础 Hash 类型，覆盖基础读写、批量读写、整数自增自减和 Hash 字段操作。
 - 过期机制：TTL 元信息、惰性过期、事件循环中周期触发的主动过期。
 - 观测能力：`INFO` 命令输出服务、连接、命令统计、AOF 与复制基础状态。
 - 复制：支持简化版 master/replica，replica 通过 `replicaof` 连接 master，完成全量快照命令流同步和后续写命令传播。
@@ -19,7 +19,7 @@
 
 当前尚未实现：
 
-- List / Hash / Set / ZSet 等复合数据类型。
+- List / Set / ZSet 等复合数据类型。
 - 数据库编号、多客户端事务、复制 backlog/部分重同步、RDB、集群。
 - `SET EX/PX/NX/XX` 等命令选项。
 - replication backlog、部分重同步和 RDB 级快照同步。
@@ -52,7 +52,7 @@ sidecar        AOF / cron
 | 模块 | 主要文件 | 职责 |
 | --- | --- | --- |
 | `core` | `sds.hpp/.cpp`, `dict.hpp/.cpp` | SDS 字符串和哈希表基础结构 |
-| `object` | `redisObject.hpp/.cpp` | Redis 对象模型，目前只有 String + RAW 编码 |
+| `object` | `redisObject.hpp/.cpp` | Redis 对象模型，当前支持 String / Hash，统一使用 RAW 编码 |
 | `protocol` | `respParser.hpp/.cpp`, `respEncoder.hpp/.cpp` | RESP2 请求解析与响应编码 |
 | `command` | `commandParser.hpp/.cpp`, `commandDispatcher.hpp/.cpp` | RESP 对象转 argv、命令分发、参数校验、AOF 调用 |
 | `config` | `serverConfig.hpp/.cpp` | 配置文件解析、服务启动配置 |
@@ -137,7 +137,23 @@ ClientSession
 - 加减后发生 int64 溢出时返回 `ERR increment or decrement would overflow`。
 - 失败的整数写命令不会追加 AOF。
 
-### 4.5 TTL 命令
+### 4.5 Hash 命令
+
+| 命令 | 参数 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `HSET key field value [field value ...]` | 至少 1 对 field/value | Integer | 返回本次新增 field 数量；覆盖已有 field 不计入新增 |
+| `HGET key field` | 2 个参数 | Bulk String / Null Bulk | key 或 field 不存在时返回 Null Bulk |
+| `HDEL key field [field ...]` | 至少 1 个 field | Integer | 返回实际删除 field 数量；删空后会删除整个 key |
+| `HEXISTS key field` | 2 个参数 | Integer | field 存在返回 1，否则返回 0 |
+| `HLEN key` | 1 个参数 | Integer | 返回当前 hash 字段数；key 不存在返回 0 |
+
+Hash 命令规则：
+
+- 对 String key 执行 Hash 命令会返回 `WRONGTYPE`。
+- `HSET` 更新已有 hash 时会保留 key 已存在的 TTL。
+- Hash 写命令会参与 AOF 和复制传播。
+
+### 4.6 TTL 命令
 
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
@@ -146,20 +162,20 @@ ClientSession
 | `PTTL key` | 1 个参数 | Integer | `-2` 不存在，`-1` 永不过期，`>=0` 为剩余毫秒数 |
 | `PERSIST key` | 1 个参数 | Integer | 移除 TTL 成功返回 1；key 不存在或没有 TTL 返回 0 |
 
-### 4.6 管理命令
+### 4.7 管理命令
 
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `INFO [section]` | 0 或 1 个参数 | Bulk String | 输出运行状态；支持 `server/clients/stats/persistence/replication` 分段 |
 
-### 4.7 复制命令
+### 4.8 复制命令
 
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `REPLCONF ...` | 可变参数 | `+OK` | replica 握手命令，当前接受并返回 OK |
 | `PSYNC ? -1` | 2 个参数 | `+FULLRESYNC ...` + 命令流 | 触发简化全量同步；master 返回当前快照命令流并将该连接标记为 replica |
 
-### 4.8 AOF 命令
+### 4.9 AOF 命令
 
 | 命令 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
@@ -168,7 +184,7 @@ ClientSession
 
 ## 5. 数据模型与过期策略
 
-当前 DB 只保存 String 对象：
+当前 DB 保存统一的 `RedisObject`，底层 key 空间和 TTL 元信息分离：
 
 ```text
 InMemoryDB
@@ -179,17 +195,18 @@ InMemoryDB
 `RedisObject` 当前只有：
 
 ```text
-type     = STRING
-encoding = RAW
-ptr      = std::string*
+STRING: type = STRING, encoding = RAW, ptr = std::string*
+HASH:   type = HASH,   encoding = RAW, ptr = DICT(field -> std::string*)
 ```
 
 过期策略：
 
 - 惰性过期：`GET/DEL/EXISTS/INCR/EXPIRE/TTL/PTTL/PERSIST` 等访问 key 的路径都会先检查该 key 是否过期。
+- 惰性过期同样适用于 Hash 访问路径，如 `HGET/HDEL/HEXISTS/HLEN`。
 - 主动过期：`EpollServer::run` 每约 100ms 调用一次 `CommandDispatcher::cron`，内部抽样执行 `InMemoryDB::activeExpireCycle(64)`。
 - `SET` 和 `MSET` 遵循当前项目的 Redis 默认语义：覆盖值时清理该 key 的旧 TTL。
-- `snapshot()` 会先触发一次主动过期扫描，再导出当前仍有效的 String 数据。
+- `HSET` 更新已有 Hash 时会保留该 key 的 TTL。
+- `snapshot()` 会先触发一次主动过期扫描，再导出当前仍有效的 String / Hash 数据。
 
 ## 6. AOF 设计
 
@@ -222,7 +239,7 @@ AOF 当前触发方式：
 
 写入规则：
 
-- 参与 AOF 的写命令：`SET/MSET/DEL/INCR/INCRBY/DECR/EXPIRE/PERSIST`。
+- 参与 AOF 的写命令：`SET/MSET/DEL/INCR/INCRBY/DECR/HSET/HDEL/EXPIRE/PERSIST`。
 - 命令参数按 RESP Array 编码落盘，复用协议层编码格式。
 - `appendfsync always`：每条写命令追加后同步 `fsync`。
 - `appendfsync everysec`：写命令立即追加，`CommandDispatcher::cron` 约每秒触发一次 AOF `fsync`。
@@ -246,7 +263,7 @@ EpollServer::init
 ```text
 REWRITEAOF
 -> InMemoryDB::snapshot
--> 生成 SET / EXPIRE 恢复命令
+-> 生成 SET/HSET/EXPIRE 恢复命令
 -> AOF::rewriteCommands
 ```
 
@@ -254,7 +271,7 @@ REWRITEAOF
 
 - `REWRITEAOF` 走同步重写路径。
 - 重写基于 `InMemoryDB::snapshot` 生成恢复命令，只保留当前仍有效的 key。
-- 每个 key 先生成 `SET key value`；如果 key 有剩余 TTL，再追加 `EXPIRE key seconds`。
+- String key 生成 `SET key value`；Hash key 生成 `HSET key field value ...`；如果 key 有剩余 TTL，再追加 `EXPIRE key seconds`。
 - `AOF::rewriteCommands` 先写入 `appendonly.aof.tmp`，成功 `fsync` 后再原子替换目标文件。
 
 后台重写：
@@ -262,7 +279,7 @@ REWRITEAOF
 ```text
 BGREWRITEAOF
 -> InMemoryDB::snapshot
--> 生成 SET / EXPIRE 恢复命令
+-> 生成 SET/HSET/EXPIRE 恢复命令
 -> AOF::startBackgroundRewrite
 -> 后台线程写 appendonly.aof.tmp.bg
 -> 主线程继续处理写命令，并将命令追加到 rewrite buffer
@@ -295,7 +312,7 @@ replica 配置 replicaof <host> <port>
 
 同步规则：
 
-- 全量同步不发送 RDB，而是把 `InMemoryDB::snapshot()` 转换成 `SET` / `EXPIRE` 命令流。
+- 全量同步不发送 RDB，而是把 `InMemoryDB::snapshot()` 转换成 `SET/HSET/EXPIRE` 命令流。
 - master 在 `PSYNC` 后将连接标记为 replica，并记录到 replica fd 集合。
 - master 执行写命令成功后，会把同一条 RESP Array 命令广播给所有 replica。
 - replica 回放复制命令时不追加 AOF，也不会再次向下游传播。
@@ -351,5 +368,5 @@ ctest --test-dir build --output-on-failure
 近期可以优先推进：
 
 - 补齐 String 常用命令选项，如 `SET EX/PX/NX/XX`。
-- 扩展 List / Hash / Set / ZSet 数据类型。
+- 扩展 List / Set / ZSet 数据类型，并继续补全 Hash 常用命令。
 - 增加 replication backlog 和部分重同步。

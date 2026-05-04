@@ -29,7 +29,7 @@ public:
     bool set(SDS&& key, void* value);
     void* get(const SDS&key);
     bool erase(const SDS&key);
-    size_t size();
+    size_t size() const;
     void forEach(const std::function<void(const SDS&, void*)>& fn) const;
 
 private:

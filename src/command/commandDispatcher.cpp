@@ -58,6 +58,10 @@ std::string encodeMGetReply(const std::vector<MGetValue>& values) {
 bool sectionMatches(const std::string& requested, const std::string& section) {
     return requested.empty() || requested == "ALL" || requested == "DEFAULT" || requested == section;
 }
+
+std::string wrongTypeReply() {
+    return RESPEncoder::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+}
 } // namespace
 
 CommandDispatcher::CommandDispatcher(bool enableAof,
@@ -108,7 +112,21 @@ std::vector<std::vector<std::string>> CommandDispatcher::snapshotCommands() {
     commands.reserve(entries.size() * 2);
 
     for (const DBSnapshotEntry& entry : entries) {
-        commands.push_back({"SET", entry.key, entry.value});
+        if (entry.type == RedisObjectType::STRING) {
+            commands.push_back({"SET", entry.key, entry.stringValue});
+        } else if (entry.type == RedisObjectType::HASH) {
+            if (!entry.hashEntries.empty()) {
+                std::vector<std::string> argv;
+                argv.reserve(2 + entry.hashEntries.size() * 2);
+                argv.push_back("HSET");
+                argv.push_back(entry.key);
+                for (const DBHashFieldEntry& fieldEntry : entry.hashEntries) {
+                    argv.push_back(fieldEntry.field);
+                    argv.push_back(fieldEntry.value);
+                }
+                commands.push_back(std::move(argv));
+            }
+        }
         if (entry.ttlMs >= 0) {
             long long ttlSeconds = (entry.ttlMs + 999) / 1000;
             if (ttlSeconds <= 0) {
@@ -148,7 +166,9 @@ bool CommandDispatcher::isWriteCommand(const std::string& cmd) const {
            cmd == "INCRBY" ||
            cmd == "DECR" ||
            cmd == "EXPIRE" ||
-           cmd == "PERSIST";
+           cmd == "PERSIST" ||
+           cmd == "HSET" ||
+           cmd == "HDEL";
 }
 
 bool CommandDispatcher::isReplicableWriteCommand(const std::vector<std::string>& argv) const {
@@ -293,7 +313,11 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
             return wrongArity("get");
         }
         std::string value;
-        if (!db_.get(argv[1], value)) {
+        const DBStatus status = db_.getStringValue(argv[1], value);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        if (status != DBStatus::Ok) {
             return RESPEncoder::nullBulk();
         }
         return RESPEncoder::bulkString(value);
@@ -307,7 +331,7 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
         values.reserve(argv.size() - 1);
         for (size_t i = 1; i < argv.size(); ++i) {
             std::string value;
-            if (!db_.get(argv[i], value)) {
+            if (db_.getStringValue(argv[i], value) != DBStatus::Ok) {
                 values.push_back(MGetValue {false, ""});
             } else {
                 values.push_back(MGetValue {true, std::move(value)});
@@ -349,6 +373,9 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
         long long newValue = 0;
         std::string err;
         if (!db_.incrBy(argv[1], 1, newValue, err)) {
+            if (err.rfind("WRONGTYPE", 0) == 0) {
+                return RESPEncoder::error(err);
+            }
             return RESPEncoder::error("ERR " + err);
         }
         if (const std::string appendErr = appendIfNeeded(true); !appendErr.empty()) {
@@ -365,6 +392,9 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
         long long newValue = 0;
         std::string err;
         if (!db_.incrBy(argv[1], -1, newValue, err)) {
+            if (err.rfind("WRONGTYPE", 0) == 0) {
+                return RESPEncoder::error(err);
+            }
             return RESPEncoder::error("ERR " + err);
         }
         if (const std::string appendErr = appendIfNeeded(true); !appendErr.empty()) {
@@ -386,12 +416,99 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
         long long newValue = 0;
         std::string err;
         if (!db_.incrBy(argv[1], delta, newValue, err)) {
+            if (err.rfind("WRONGTYPE", 0) == 0) {
+                return RESPEncoder::error(err);
+            }
             return RESPEncoder::error("ERR " + err);
         }
         if (const std::string appendErr = appendIfNeeded(true); !appendErr.empty()) {
             return appendErr;
         }
         return RESPEncoder::integer(newValue);
+    }
+
+    if (cmd == "HSET") {
+        if (argv.size() < 4 || (argv.size() % 2) != 0) {
+            return wrongArity("hset");
+        }
+
+        std::vector<std::pair<std::string, std::string>> fieldValues;
+        fieldValues.reserve((argv.size() - 2) / 2);
+        for (size_t i = 2; i + 1 < argv.size(); i += 2) {
+            fieldValues.emplace_back(argv[i], argv[i + 1]);
+        }
+
+        int addedCount = 0;
+        const DBStatus status = db_.hset(argv[1], fieldValues, addedCount);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        if (const std::string appendErr = appendIfNeeded(true); !appendErr.empty()) {
+            return appendErr;
+        }
+        return RESPEncoder::integer(addedCount);
+    }
+
+    if (cmd == "HGET") {
+        if (argv.size() != 3) {
+            return wrongArity("hget");
+        }
+
+        std::string value;
+        const DBStatus status = db_.hget(argv[1], argv[2], value);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        if (status != DBStatus::Ok) {
+            return RESPEncoder::nullBulk();
+        }
+        return RESPEncoder::bulkString(value);
+    }
+
+    if (cmd == "HDEL") {
+        if (argv.size() < 3) {
+            return wrongArity("hdel");
+        }
+
+        std::vector<std::string> fields(argv.begin() + 2, argv.end());
+        int removedCount = 0;
+        const DBStatus status = db_.hdel(argv[1], fields, removedCount);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        if (const std::string appendErr = appendIfNeeded(true); !appendErr.empty()) {
+            return appendErr;
+        }
+        return RESPEncoder::integer(removedCount);
+    }
+
+    if (cmd == "HEXISTS") {
+        if (argv.size() != 3) {
+            return wrongArity("hexists");
+        }
+
+        bool exists = false;
+        const DBStatus status = db_.hexists(argv[1], argv[2], exists);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        return RESPEncoder::integer(exists ? 1 : 0);
+    }
+
+    if (cmd == "HLEN") {
+        if (argv.size() != 2) {
+            return wrongArity("hlen");
+        }
+
+        size_t len = 0;
+        const DBStatus status = db_.hlen(argv[1], len);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        if (status == DBStatus::NotFound) {
+            return RESPEncoder::integer(0);
+        }
+        return RESPEncoder::integer(static_cast<long long>(len));
     }
 
     if (cmd == "EXPIRE") {

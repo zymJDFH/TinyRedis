@@ -5,12 +5,29 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
-struct DBSnapshotEntry {
-    std::string key;
+//DB层的统一返回状态，告诉上层命令分发器这次访问的结果是什么
+enum class DBStatus {
+    Ok = 0,
+    NotFound,
+    WrongType,
+};
+
+//Hash中的字段
+struct DBHashFieldEntry {
+    std::string field;
     std::string value;
+};
+
+//DB中一个key的快照表示
+struct DBSnapshotEntry {
+    RedisObjectType type;
+    std::string key;
     long long ttlMs;
+    std::string stringValue;
+    std::vector<DBHashFieldEntry> hashEntries;
 };
 
 class InMemoryDB {
@@ -22,6 +39,8 @@ public:
     void set(const std::string& key, const std::string& value);
     // GET key；返回 false 表示 key 不存在（或已过期）。
     bool get(const std::string& key, std::string& value);
+    // GET key 的带类型版本；可区分不存在和类型错误。
+    DBStatus getStringValue(const std::string& key, std::string& value);
     // DEL key；返回 1 表示删除成功，0 表示 key 不存在。
     int del(const std::string& key);
     // EXISTS key；过期 key 视为不存在。
@@ -30,6 +49,18 @@ public:
     bool incr(const std::string& key, long long& newValue, std::string& err);
     // INCRBY/DECR 的通用实现；delta 可正可负。
     bool incrBy(const std::string& key, long long delta, long long& newValue, std::string& err);
+    // HSET key field value [field value ...]；返回本次新增 field 的数量。
+    DBStatus hset(const std::string& key,
+                  const std::vector<std::pair<std::string, std::string>>& fieldValues,
+                  int& addedCount);
+    // HGET key field；NotFound 表示 key 或 field 不存在。
+    DBStatus hget(const std::string& key, const std::string& field, std::string& value);
+    // HDEL key field [field ...]；返回删除的 field 数量。
+    DBStatus hdel(const std::string& key, const std::vector<std::string>& fields, int& removedCount);
+    // HEXISTS key field；NotFound 表示 key 或 field 不存在。
+    DBStatus hexists(const std::string& key, const std::string& field, bool& exists);
+    // HLEN key；NotFound 表示 key 不存在。
+    DBStatus hlen(const std::string& key, size_t& len);
 
     // EXPIRE key seconds；返回 1 表示设置成功，0 表示 key 不存在。
     int expire(const std::string& key, long long ttlSeconds);
@@ -45,6 +76,7 @@ public:
     std::vector<DBSnapshotEntry> snapshot();
 
 private:
+    RedisObject* getObject(const std::string& key);
     // 惰性过期检查：若 key 已过期则立即删除并返回 true。
     bool expireIfNeeded(const std::string& key);
     // 获取当前单调时钟毫秒时间戳。

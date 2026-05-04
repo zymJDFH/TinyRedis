@@ -64,6 +64,29 @@ TEST(AOFTest, AppendAndReplayRestoresState) {
     removeAofArtifacts(path);
 }
 
+TEST(AOFTest, HashAppendAndReplayRestoresState) {
+    const std::string path = tempAofPath("hash_restore");
+    removeAofArtifacts(path);
+
+    {
+        CommandDispatcher writer(true, path);
+        EXPECT_EQ(writer.dispatch({"HSET", "user:1", "name", "zym", "age", "20"}), ":2\r\n");
+        EXPECT_EQ(writer.dispatch({"HSET", "user:1", "age", "21"}), ":0\r\n");
+        EXPECT_EQ(writer.dispatch({"EXPIRE", "user:1", "10"}), ":1\r\n");
+    }
+
+    {
+        CommandDispatcher reader(true, path);
+        ASSERT_TRUE(reader.loadAof()) << reader.lastError();
+        EXPECT_EQ(reader.dispatch({"HGET", "user:1", "name"}), "$3\r\nzym\r\n");
+        EXPECT_EQ(reader.dispatch({"HGET", "user:1", "age"}), "$2\r\n21\r\n");
+        EXPECT_EQ(reader.dispatch({"HLEN", "user:1"}), ":2\r\n");
+        EXPECT_NE(reader.dispatch({"TTL", "user:1"}), ":-1\r\n");
+    }
+
+    removeAofArtifacts(path);
+}
+
 TEST(AOFTest, EverySecPolicyAppendsAndReplays) {
     const std::string path = tempAofPath("everysec");
     removeAofArtifacts(path);
@@ -183,6 +206,32 @@ TEST(AOFTest, RewritePreservesTtl) {
         const std::string ttlReply = reader.dispatch({"TTL", "ttl"});
         ASSERT_FALSE(ttlReply.empty());
         EXPECT_EQ(ttlReply.front(), ':');
+        EXPECT_NE(ttlReply, ":-1\r\n");
+        EXPECT_NE(ttlReply, ":-2\r\n");
+    }
+
+    removeAofArtifacts(path);
+}
+
+TEST(AOFTest, RewritePreservesHashState) {
+    const std::string path = tempAofPath("rewrite_hash");
+    removeAofArtifacts(path);
+
+    {
+        CommandDispatcher writer(true, path);
+        EXPECT_EQ(writer.dispatch({"HSET", "user:1", "name", "zym", "age", "20"}), ":2\r\n");
+        EXPECT_EQ(writer.dispatch({"HSET", "user:1", "age", "21"}), ":0\r\n");
+        EXPECT_EQ(writer.dispatch({"EXPIRE", "user:1", "10"}), ":1\r\n");
+        EXPECT_EQ(writer.dispatch({"REWRITEAOF"}), "+OK\r\n");
+    }
+
+    {
+        CommandDispatcher reader(true, path);
+        ASSERT_TRUE(reader.loadAof()) << reader.lastError();
+        EXPECT_EQ(reader.dispatch({"HGET", "user:1", "name"}), "$3\r\nzym\r\n");
+        EXPECT_EQ(reader.dispatch({"HGET", "user:1", "age"}), "$2\r\n21\r\n");
+        EXPECT_EQ(reader.dispatch({"HLEN", "user:1"}), ":2\r\n");
+        const std::string ttlReply = reader.dispatch({"TTL", "user:1"});
         EXPECT_NE(ttlReply, ":-1\r\n");
         EXPECT_NE(ttlReply, ":-2\r\n");
     }
