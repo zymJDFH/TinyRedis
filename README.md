@@ -1,8 +1,8 @@
 # TinyRedis
 ## 项目简介
 TinyRedis 是一个基于 C++17 实现的 Redis 兼容内存数据库内核项目，目标是在贴近真实工程的前提下逐步复现 Redis 的核心能力。  
-当前版本已打通 `epoll` 单线程事件循环、RESP2 编解码、命令解析与分发链路，并支持 String 基础命令、TTL 命令子集与 AOF 持久化。  
-项目重点关注模块化设计与可测试性（`net/protocol/command/core/object/persistentence` 分层），后续将继续推进配置化、稳定性增强与更多数据类型。
+当前版本已打通 `epoll` 单线程事件循环、RESP2 编解码、命令解析与分发链路，并支持 String 基础命令、TTL 命令子集、AOF 持久化与简化版主从复制。  
+项目重点关注模块化设计与可测试性（`net/protocol/command/core/object/persistentence` 分层），当前阶段优先完善工程化收口、稳定性增强与后续核心特性的演进路线。
 
 
 ## 开发环境
@@ -33,6 +33,14 @@ TinyRedis 当前采用单线程 `epoll` 事件循环模型，主请求链路按 
 - 复制：支持简化版 master/replica，全量快照命令流同步和后续写命令传播
 - 持久化：AOF（写命令追加 + 启动重放恢复 + `REWRITEAOF/BGREWRITEAOF` + `always/everysec/no` fsync 策略）
 - 测试基线：`test_sds`、`test_dict`、`test_resp`、`test_config`、`test_command`、`test_aof`、`test_e2e`（已接入 CTest）
+
+## 当前阶段
+
+项目当前处于“核心链路已完成，进入工程化收口与下一阶段主线选择”的阶段。
+
+- 已经具备可运行、可测试、可演示的最小 Redis 内核子集
+- 短期重点不是继续零散堆命令，而是先补齐路线、能力矩阵和展示材料
+- 下一阶段建议在 `List`、`RDB snapshot`、复制增强三条主线中只选一条推进
 
 
 ## 目录结构
@@ -93,7 +101,6 @@ TinyRedis/
 │   └── test_sds.cpp
 ├── docs/                       # 设计文档与路线文档
 │   ├── assets/
-│   │   ├── tinyredis.png
 │   │   └── v0.1.png
 │   ├── design.md
 │   └── roadmap.md
@@ -139,6 +146,7 @@ ctest --test-dir build --output-on-failure
 
 ## 文档索引
 - [设计说明](docs/design.md)
+- [项目路线图](docs/roadmap.md)
 - [性能基线](perf/README.md)
 - 任务拆分与进度跟踪以 GitHub `Issues/Projects` 为主
 
@@ -148,5 +156,5 @@ ctest --test-dir build --output-on-failure
 详见：[perf/README.md](perf/README.md)
 
 ## 相关文章
-[从0到1做一个 C++ Redis内核：项目设计与模块拆分](https://blog.csdn.net/2402_87224981/article/details/160474316)
+[从0到1做一个 C++ Redis内核：项目设计与模块拆分](https://blog.csdn.net/2402_87224981/article/details/160474316)  
 [基于epoll的单线程Reactor：Tinyredis的网络层实现](https://blog.csdn.net/2402_87224981/article/details/160557193)
