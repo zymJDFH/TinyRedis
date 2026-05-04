@@ -165,15 +165,22 @@ TEST(CommandDispatcherTest, HashBasicFlow) {
     EXPECT_EQ(dispatcher.dispatch({"HGET", "user:1", "name"}), "$3\r\nzym\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HGET", "user:1", "age"}), "$2\r\n21\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HGET", "user:1", "missing"}), "$-1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HMGET", "user:1", "name", "missing", "age"}),
+              "*3\r\n$3\r\nzym\r\n$-1\r\n$2\r\n21\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HEXISTS", "user:1", "city"}), ":1\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HEXISTS", "user:1", "missing"}), ":0\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HLEN", "user:1"}), ":3\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HKEYS", "user:1"}), "*3\r\n$3\r\nage\r\n$4\r\ncity\r\n$4\r\nname\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HVALS", "user:1"}), "*3\r\n$2\r\n21\r\n$2\r\nhz\r\n$3\r\nzym\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HGETALL", "user:1"}),
+              "*6\r\n$3\r\nage\r\n$2\r\n21\r\n$4\r\ncity\r\n$2\r\nhz\r\n$4\r\nname\r\n$3\r\nzym\r\n");
 
     EXPECT_EQ(dispatcher.dispatch({"HDEL", "user:1", "missing", "city"}), ":1\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HLEN", "user:1"}), ":2\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HDEL", "user:1", "name", "age"}), ":2\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HLEN", "user:1"}), ":0\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXISTS", "user:1"}), ":0\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HGETALL", "user:1"}), "*0\r\n");
 }
 
 TEST(CommandDispatcherTest, HashWrongTypeFlow) {
@@ -182,7 +189,15 @@ TEST(CommandDispatcherTest, HashWrongTypeFlow) {
     EXPECT_EQ(dispatcher.dispatch({"SET", "plain", "v"}), "+OK\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HGET", "plain", "field"}),
               "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HMGET", "plain", "field"}),
+              "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HSET", "plain", "field", "v"}),
+              "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HKEYS", "plain"}),
+              "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HVALS", "plain"}),
+              "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HGETALL", "plain"}),
               "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n");
 
     EXPECT_EQ(dispatcher.dispatch({"HSET", "hash", "field", "v"}), ":1\r\n");
@@ -204,6 +219,15 @@ TEST(CommandDispatcherTest, HashPreservesExistingTtl) {
     const long long ttlAfter = parseIntegerReply(dispatcher.dispatch({"TTL", "session"}));
     EXPECT_GE(ttlAfter, 0);
     EXPECT_LE(ttlAfter, ttlBefore);
+}
+
+TEST(CommandDispatcherTest, HashReadCommandsHandleMissingKey) {
+    CommandDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.dispatch({"HMGET", "missing", "a", "b"}), "*2\r\n$-1\r\n$-1\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HKEYS", "missing"}), "*0\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HVALS", "missing"}), "*0\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HGETALL", "missing"}), "*0\r\n");
 }
 
 TEST(CommandDispatcherTest, ExistsSupportsMultipleKeys) {
@@ -237,9 +261,13 @@ TEST(CommandDispatcherTest, ErrorPaths) {
     EXPECT_EQ(dispatcher.dispatch({"HSET", "h", "f"}), "-ERR wrong number of arguments for 'hset' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HSET", "h", "f", "v", "orphan"}), "-ERR wrong number of arguments for 'hset' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HGET", "h"}), "-ERR wrong number of arguments for 'hget' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HMGET", "h"}), "-ERR wrong number of arguments for 'hmget' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HDEL", "h"}), "-ERR wrong number of arguments for 'hdel' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HEXISTS", "h"}), "-ERR wrong number of arguments for 'hexists' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"HLEN", "h", "extra"}), "-ERR wrong number of arguments for 'hlen' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HKEYS"}), "-ERR wrong number of arguments for 'hkeys' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HVALS", "h", "extra"}), "-ERR wrong number of arguments for 'hvals' command\r\n");
+    EXPECT_EQ(dispatcher.dispatch({"HGETALL", "h", "extra"}), "-ERR wrong number of arguments for 'hgetall' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"EXPIRE", "k"}), "-ERR wrong number of arguments for 'expire' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"TTL"}), "-ERR wrong number of arguments for 'ttl' command\r\n");
     EXPECT_EQ(dispatcher.dispatch({"PTTL"}), "-ERR wrong number of arguments for 'pttl' command\r\n");

@@ -465,6 +465,28 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
         return RESPEncoder::bulkString(value);
     }
 
+    if (cmd == "HMGET") {
+        if (argv.size() < 3) {
+            return wrongArity("hmget");
+        }
+
+        std::vector<MGetValue> values;
+        values.reserve(argv.size() - 2);
+        for (size_t i = 2; i < argv.size(); ++i) {
+            std::string value;
+            const DBStatus status = db_.hget(argv[1], argv[i], value);
+            if (status == DBStatus::WrongType) {
+                return wrongTypeReply();
+            }
+            if (status != DBStatus::Ok) {
+                values.push_back(MGetValue {false, ""});
+            } else {
+                values.push_back(MGetValue {true, std::move(value)});
+            }
+        }
+        return encodeMGetReply(values);
+    }
+
     if (cmd == "HDEL") {
         if (argv.size() < 3) {
             return wrongArity("hdel");
@@ -509,6 +531,47 @@ std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& 
             return RESPEncoder::integer(0);
         }
         return RESPEncoder::integer(static_cast<long long>(len));
+    }
+
+    if (cmd == "HKEYS" || cmd == "HVALS" || cmd == "HGETALL") {
+        if (argv.size() != 2) {
+            if (cmd == "HKEYS") {
+                return wrongArity("hkeys");
+            }
+            if (cmd == "HVALS") {
+                return wrongArity("hvals");
+            }
+            return wrongArity("hgetall");
+        }
+
+        std::vector<DBHashFieldEntry> entries;
+        const DBStatus status = db_.hgetall(argv[1], entries);
+        if (status == DBStatus::WrongType) {
+            return wrongTypeReply();
+        }
+        if (status == DBStatus::NotFound) {
+            return RESPEncoder::array({});
+        }
+
+        std::vector<std::string> reply;
+        if (cmd == "HKEYS") {
+            reply.reserve(entries.size());
+            for (const DBHashFieldEntry& entry : entries) {
+                reply.push_back(entry.field);
+            }
+        } else if (cmd == "HVALS") {
+            reply.reserve(entries.size());
+            for (const DBHashFieldEntry& entry : entries) {
+                reply.push_back(entry.value);
+            }
+        } else {
+            reply.reserve(entries.size() * 2);
+            for (const DBHashFieldEntry& entry : entries) {
+                reply.push_back(entry.field);
+                reply.push_back(entry.value);
+            }
+        }
+        return RESPEncoder::array(reply);
     }
 
     if (cmd == "EXPIRE") {

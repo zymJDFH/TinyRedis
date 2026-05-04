@@ -61,6 +61,8 @@ public:
     DBStatus hexists(const std::string& key, const std::string& field, bool& exists);
     // HLEN key；NotFound 表示 key 不存在。
     DBStatus hlen(const std::string& key, size_t& len);
+    // HGETALL/HKEYS/HVALS 的底层导出接口；NotFound 表示 key 不存在。
+    DBStatus hgetall(const std::string& key, std::vector<DBHashFieldEntry>& entries);
 
     // EXPIRE key seconds；返回 1 表示设置成功，0 表示 key 不存在。
     int expire(const std::string& key, long long ttlSeconds);

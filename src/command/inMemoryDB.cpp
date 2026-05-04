@@ -1,5 +1,6 @@
 #include "../../include/command/inMemoryDB.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
@@ -318,6 +319,29 @@ DBStatus InMemoryDB::hlen(const std::string& key, size_t& len) {
 
     DICT* hash = getHashObjectValue(obj);
     len = hash->size();
+    return DBStatus::Ok;
+}
+
+DBStatus InMemoryDB::hgetall(const std::string& key, std::vector<DBHashFieldEntry>& entries) {
+    entries.clear();
+
+    RedisObject* obj = getObject(key);
+    if (obj == nullptr) {
+        return DBStatus::NotFound;
+    }
+    if (obj->type != RedisObjectType::HASH) {
+        return DBStatus::WrongType;
+    }
+
+    const DICT* hash = getHashObjectValue(obj);
+    hash->forEach([&entries](const SDS& field, void* rawValue) {
+        entries.push_back(DBHashFieldEntry {field.c_str(), *asStringValue(rawValue)});
+    });
+
+    std::sort(entries.begin(), entries.end(), [](const DBHashFieldEntry& lhs, const DBHashFieldEntry& rhs) {
+        return lhs.field < rhs.field;
+    });
+
     return DBStatus::Ok;
 }
 
